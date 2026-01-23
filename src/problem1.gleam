@@ -140,6 +140,7 @@ fn process_lines(lines: List(String), remainder: String) -> LineResult {
 
   case result {
     Error(_) -> Disconnect(response: "ERROR\n")
-    Ok(responses) -> Continue(responses: list.reverse(responses), buffer: remainder)
+    Ok(responses) ->
+      Continue(responses: list.reverse(responses), buffer: remainder)
   }
 }

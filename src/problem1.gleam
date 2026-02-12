@@ -39,7 +39,7 @@ pub fn main() -> Nil {
           glisten.get_client_info(conn)
         io.println(
           "New connection from "
-          <> string.inspect(ip_address)
+          <> glisten.ip_address_to_string(ip_address)
           <> " on "
           <> int.to_string(port),
         )

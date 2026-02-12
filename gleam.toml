@@ -8,6 +8,7 @@ gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_otp = ">= 1.2.0 and < 2.0.0"
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 glisten = ">= 8.0.3 and < 9.0.0"
+grammy = { git = "https://github.com/jtdowney/grammy.git", ref = "update-deps" }
 
 [dev-dependencies]
 unitest = ">= 1.0.0 and < 2.0.0"

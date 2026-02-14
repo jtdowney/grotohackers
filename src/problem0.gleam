@@ -1,21 +1,25 @@
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
-import gleam/io
 import gleam/option
 import glisten.{Packet}
+import logging
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let assert Ok(_) =
     glisten.new(
       fn(conn) {
         let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
           glisten.get_client_info(conn)
-        io.println(
+        logging.log(
+          logging.Debug,
           "New connection from "
-          <> glisten.ip_address_to_string(ip_address)
-          <> " on "
-          <> int.to_string(port),
+            <> glisten.ip_address_to_string(ip_address)
+            <> " on "
+            <> int.to_string(port),
         )
 
         #(Nil, option.None)

@@ -9,6 +9,7 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import grammy
+import logging
 
 pub type LrcpMessage {
   Connect(session: Int)
@@ -204,6 +205,9 @@ fn do_chunk(
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let assert Ok(_) =
     grammy.new(handle_connection, handle_client_data)
     |> grammy.port(3050)

@@ -3,12 +3,12 @@ import gleam/bool
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{None}
 import gleam/result
 import gleam/string
 import glisten.{Packet}
+import logging
 
 pub type CipherOp {
   ReverseBits
@@ -172,6 +172,9 @@ pub fn handle_request(line: String) -> String {
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let assert Ok(_) =
     glisten.new(handle_connection, handle_client_data)
     |> glisten.bind("::")
@@ -185,11 +188,12 @@ fn handle_connection(
 ) -> #(Phase, option.Option(process.Selector(Nil))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
     glisten.get_client_info(conn)
-  io.println(
+  logging.log(
+    logging.Debug,
     "New connection from "
-    <> glisten.ip_address_to_string(ip_address)
-    <> " on "
-    <> int.to_string(port),
+      <> glisten.ip_address_to_string(ip_address)
+      <> " on "
+      <> int.to_string(port),
   )
 
   #(NegotiatingCipher(spec_buffer: <<>>), None)

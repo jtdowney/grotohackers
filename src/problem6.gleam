@@ -4,13 +4,13 @@ import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
 import glisten.{Packet, User}
+import logging
 
 pub type Plate =
   String
@@ -450,11 +450,12 @@ fn handle_connection(
 ) -> #(ConnectionState, Option(process.Selector(ServerMessage))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
     glisten.get_client_info(conn)
-  io.println(
+  logging.log(
+    logging.Debug,
     "New connection from "
-    <> glisten.ip_address_to_string(ip_address)
-    <> " on "
-    <> int.to_string(port),
+      <> glisten.ip_address_to_string(ip_address)
+      <> " on "
+      <> int.to_string(port),
   )
 
   let send_subject = process.new_subject()
@@ -610,6 +611,9 @@ fn handle_close(state: ConnectionState) -> Nil {
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let server = start_server()
   let assert Ok(_) =
     glisten.new(handle_connection(server, _), handle_client_data)

@@ -3,11 +3,11 @@ import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Selector}
 import gleam/int
-import gleam/io
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import grammy
+import logging
 
 pub type Request {
   Insert(key: String, value: String)
@@ -62,11 +62,12 @@ fn handle_client_data(
 ) -> grammy.Next(Dict(String, String), Nil) {
   case msg {
     grammy.Packet(address, port, data) -> {
-      io.println(
+      logging.log(
+        logging.Debug,
         "Packet from "
-        <> grammy.ip_address_to_string(address)
-        <> ":"
-        <> int.to_string(port),
+          <> grammy.ip_address_to_string(address)
+          <> ":"
+          <> int.to_string(port),
       )
       handle_packet(store, conn, address, port, data)
       |> grammy.continue
@@ -76,6 +77,9 @@ fn handle_client_data(
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let assert Ok(_) =
     grammy.new(handle_connection, handle_client_data)
     |> grammy.port(3050)

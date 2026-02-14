@@ -3,11 +3,11 @@ import gleam/bool
 import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
 import glisten.{Packet, User}
+import logging
 import mug
 
 const tony_address = "7YWHMfk9JZe0LM0g1ZauHuiSxhI"
@@ -103,11 +103,12 @@ fn handle_connection(
 ) -> #(State, option.Option(process.Selector(ProxyMessage))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
     glisten.get_client_info(conn)
-  io.println(
+  logging.log(
+    logging.Debug,
     "New connection from "
-    <> glisten.ip_address_to_string(ip_address)
-    <> " on "
-    <> int.to_string(port),
+      <> glisten.ip_address_to_string(ip_address)
+      <> " on "
+      <> int.to_string(port),
   )
 
   let assert Ok(upstream_socket) =
@@ -188,6 +189,9 @@ fn handle_close(state: State) -> Nil {
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let assert Ok(_) =
     glisten.new(handle_connection, handle_client_data)
     |> glisten.with_close(handle_close)

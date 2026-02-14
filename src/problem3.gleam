@@ -4,12 +4,12 @@ import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
 import glisten.{Packet, User}
+import logging
 
 pub type RoomMessage {
   Join(
@@ -127,11 +127,12 @@ fn handle_connection(
 ) -> #(ConnectionState, Option(process.Selector(String))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
     glisten.get_client_info(conn)
-  io.println(
+  logging.log(
+    logging.Debug,
     "New connection from "
-    <> glisten.ip_address_to_string(ip_address)
-    <> " on "
-    <> int.to_string(port),
+      <> glisten.ip_address_to_string(ip_address)
+      <> " on "
+      <> int.to_string(port),
   )
 
   let client_subject = process.new_subject()
@@ -239,6 +240,9 @@ fn handle_close(state: ConnectionState) -> Nil {
 }
 
 pub fn main() -> Nil {
+  logging.configure()
+  logging.set_level(logging.Debug)
+
   let room = start_room()
   let assert Ok(_) =
     glisten.new(handle_connection(room, _), handle_client_data)

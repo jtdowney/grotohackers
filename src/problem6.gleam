@@ -1,3 +1,6 @@
+import bitty
+import bitty/bytes
+import bitty/num.{BigEndian}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -103,96 +106,75 @@ pub type ServerState {
   )
 }
 
-pub fn parse_string(data: BitArray) -> Result(#(String, BitArray), ParseError) {
-  case data {
-    <<len:8, rest:bytes>> -> {
-      use <- bool.guard(
-        when: bit_array.byte_size(rest) < len,
-        return: Error(NeedMoreData),
-      )
-
-      let assert <<str_bytes:bytes-size(len), remaining:bytes>> = rest
-      bit_array.to_string(str_bytes)
-      |> result.map(fn(s) { #(s, remaining) })
-      |> result.replace_error(InvalidMessage("Invalid UTF-8 in string"))
-    }
-    _ -> Error(NeedMoreData)
+fn string_parser() -> bitty.Parser(String) {
+  use len <- bitty.then(num.u8())
+  use raw <- bitty.then(bytes.take(len))
+  case bit_array.to_string(raw) {
+    Ok(s) -> bitty.success(s)
+    Error(_) -> bitty.fail("Invalid UTF-8 in string")
   }
+}
+
+fn plate_parser() -> bitty.Parser(ClientMessage) {
+  use _ <- bitty.then(bytes.tag(<<0x20>>))
+  use plate <- bitty.then(string_parser())
+  use ts <- bitty.then(num.u32(BigEndian))
+  bitty.success(Plate(plate:, timestamp: ts))
+}
+
+fn want_heartbeat_parser() -> bitty.Parser(ClientMessage) {
+  use _ <- bitty.then(bytes.tag(<<0x40>>))
+  use interval <- bitty.then(num.u32(BigEndian))
+  bitty.success(WantHeartbeat(interval:))
+}
+
+fn i_am_camera_parser() -> bitty.Parser(ClientMessage) {
+  use _ <- bitty.then(bytes.tag(<<0x80>>))
+  use road <- bitty.then(num.u16(BigEndian))
+  use mile <- bitty.then(num.u16(BigEndian))
+  use limit <- bitty.then(num.u16(BigEndian))
+  bitty.success(IAmCamera(road:, mile:, limit:))
+}
+
+fn i_am_dispatcher_parser() -> bitty.Parser(ClientMessage) {
+  use _ <- bitty.then(bytes.tag(<<0x81>>))
+  use count <- bitty.then(num.u8())
+  use roads <- bitty.then(bitty.repeat(num.u16(BigEndian), times: count))
+  bitty.success(IAmDispatcher(roads:))
+}
+
+fn client_message_parser() -> bitty.Parser(ClientMessage) {
+  bitty.one_of([
+    plate_parser(),
+    want_heartbeat_parser(),
+    i_am_camera_parser(),
+    i_am_dispatcher_parser(),
+  ])
+}
+
+fn map_message_error(data: BitArray, err: bitty.BittyError) -> ParseError {
+  case err.message, err.at.byte, data {
+    Some(msg), _, _ -> InvalidMessage(msg)
+    None, 0, <<tag:8, _:bytes>> -> UnknownMessage(tag)
+    None, _, _ -> NeedMoreData
+  }
+}
+
+pub fn parse_string(data: BitArray) -> Result(#(String, BitArray), ParseError) {
+  bitty.run_partial(string_parser(), on: data)
+  |> result.map_error(fn(err) {
+    case err.message {
+      Some(msg) -> InvalidMessage(msg)
+      None -> NeedMoreData
+    }
+  })
 }
 
 pub fn parse_message(
   data: BitArray,
 ) -> Result(#(ClientMessage, BitArray), ParseError) {
-  case data {
-    <<>> -> Error(NeedMoreData)
-    <<0x20, rest:bytes>> -> parse_plate_message(rest)
-    <<0x40, rest:bytes>> -> parse_want_heartbeat(rest)
-    <<0x80, rest:bytes>> -> parse_i_am_camera(rest)
-    <<0x81, rest:bytes>> -> parse_i_am_dispatcher(rest)
-    <<tag:8, _:bytes>> -> Error(UnknownMessage(tag))
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_plate_message(
-  data: BitArray,
-) -> Result(#(ClientMessage, BitArray), ParseError) {
-  use #(plate, rest) <- result.try(parse_string(data))
-  case rest {
-    <<ts:unsigned-size(32)-big, remaining:bytes>> ->
-      Ok(#(Plate(plate:, timestamp: ts), remaining))
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_want_heartbeat(
-  data: BitArray,
-) -> Result(#(ClientMessage, BitArray), ParseError) {
-  case data {
-    <<interval:unsigned-size(32)-big, rest:bytes>> ->
-      Ok(#(WantHeartbeat(interval:), rest))
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_i_am_camera(
-  data: BitArray,
-) -> Result(#(ClientMessage, BitArray), ParseError) {
-  case data {
-    <<
-      road:unsigned-size(16)-big,
-      mile:unsigned-size(16)-big,
-      limit:unsigned-size(16)-big,
-      rest:bytes,
-    >> -> Ok(#(IAmCamera(road:, mile:, limit:), rest))
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_i_am_dispatcher(
-  data: BitArray,
-) -> Result(#(ClientMessage, BitArray), ParseError) {
-  case data {
-    <<num_roads:8, rest:bytes>> -> parse_road_list([], rest, num_roads)
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_road_list(
-  acc: List(Road),
-  data: BitArray,
-  remaining: Int,
-) -> Result(#(ClientMessage, BitArray), ParseError) {
-  use <- bool.guard(
-    when: remaining == 0,
-    return: Ok(#(IAmDispatcher(roads: list.reverse(acc)), data)),
-  )
-
-  case data {
-    <<road:unsigned-size(16)-big, rest:bytes>> ->
-      parse_road_list([road, ..acc], rest, remaining - 1)
-    _ -> Error(NeedMoreData)
-  }
+  bitty.run_partial(client_message_parser(), on: data)
+  |> result.map_error(map_message_error(data, _))
 }
 
 pub fn process_buffer(
@@ -403,10 +385,7 @@ fn handle_register_dispatcher(
   let new_dispatchers =
     list.fold(roads, state.dispatchers, fn(dispatchers, road) {
       dict.upsert(in: dispatchers, update: road, with: fn(existing) {
-        case existing {
-          Some(existing) -> [subject, ..existing]
-          None -> [subject]
-        }
+        [subject, ..option.unwrap(existing, [])]
       })
     })
 

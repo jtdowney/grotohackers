@@ -1,3 +1,6 @@
+import bitty
+import bitty/bytes
+import bitty/num.{BigEndian}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -66,14 +69,27 @@ fn handle_client_data(
   }
 }
 
+fn insert_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<73>>))
+  use ts <- bitty.then(num.i32(BigEndian))
+  use price <- bitty.then(num.i32(BigEndian))
+  bitty.success(Insert(timestamp: ts, price: price))
+}
+
+fn query_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<81>>))
+  use min <- bitty.then(num.i32(BigEndian))
+  use max <- bitty.then(num.i32(BigEndian))
+  bitty.success(Query(mintime: min, maxtime: max))
+}
+
+fn message_parser() -> bitty.Parser(Message) {
+  bitty.one_of([insert_parser(), query_parser()])
+}
+
 pub fn parse_message(data: BitArray) -> Result(Message, Nil) {
-  case data {
-    <<73:8, ts:size(32)-big-signed, price:size(32)-big-signed>> ->
-      Ok(Insert(timestamp: ts, price: price))
-    <<81:8, min:size(32)-big-signed, max:size(32)-big-signed>> ->
-      Ok(Query(mintime: min, maxtime: max))
-    _ -> Error(Nil)
-  }
+  bitty.run(message_parser(), on: data)
+  |> result.replace_error(Nil)
 }
 
 pub fn process_buffer(
@@ -88,12 +104,14 @@ fn extract_messages(
   data: BitArray,
   acc: List(Message),
 ) -> Result(#(List(Message), BitArray), Nil) {
-  case data {
-    <<chunk:bytes-size(9), rest:bytes>> -> {
-      use msg <- result.try(parse_message(chunk))
-      extract_messages(rest, [msg, ..acc])
+  case bit_array.byte_size(data) < 9 {
+    True -> Ok(#(list.reverse(acc), data))
+    False -> {
+      case bitty.run_partial(message_parser(), on: data) {
+        Error(_) -> Error(Nil)
+        Ok(#(msg, rest)) -> extract_messages(rest, [msg, ..acc])
+      }
     }
-    _ -> Ok(#(list.reverse(acc), data))
   }
 }
 

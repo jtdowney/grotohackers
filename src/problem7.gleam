@@ -10,6 +10,13 @@ import gleam/result
 import gleam/string
 import grammy
 import logging
+import nibble
+import nibble/lexer
+
+pub type LrcpToken {
+  Slash
+  Content(String)
+}
 
 pub type LrcpMessage {
   Connect(session: Int)
@@ -58,15 +65,9 @@ pub fn parse_message(data: BitArray) -> Result(LrcpMessage, Nil) {
   )
 
   use text <- result.try(bit_array.to_string(data))
-  use inner <- result.try(strip_outer_slashes(text))
-  use #(msg_type, rest) <- result.try(string.split_once(inner, "/"))
-  case msg_type {
-    "connect" -> parse_single_field(rest, Connect)
-    "close" -> parse_single_field(rest, Close)
-    "ack" -> parse_two_fields(rest, Ack)
-    "data" -> parse_data_fields(rest)
-    _ -> Error(Nil)
-  }
+  use tokens <- result.try(tokenize(text))
+  nibble.run(tokens, lrcp_parser())
+  |> result.replace_error(Nil)
 }
 
 pub fn serialize_message(msg: LrcpMessage) -> String {
@@ -86,57 +87,112 @@ pub fn serialize_message(msg: LrcpMessage) -> String {
   }
 }
 
-fn strip_outer_slashes(text: String) -> Result(String, Nil) {
-  let len = string.length(text)
-  use <- bool.guard(when: len < 2, return: Error(Nil))
-  use <- bool.guard(when: !string.starts_with(text, "/"), return: Error(Nil))
-  use <- bool.guard(when: !string.ends_with(text, "/"), return: Error(Nil))
-  Ok(string.slice(text, 1, len - 2))
+fn tokenize(input: String) -> Result(List(lexer.Token(LrcpToken)), Nil) {
+  tokenize_loop(string.to_graphemes(input), "", [])
 }
 
-fn parse_number(text: String) -> Result(Int, Nil) {
-  use n <- result.try(int.parse(text))
-  use <- bool.guard(when: n < 0, return: Error(Nil))
-  use <- bool.guard(when: n >= max_numeric_value, return: Error(Nil))
-  Ok(n)
-}
-
-fn parse_single_field(
-  text: String,
-  constructor: fn(Int) -> LrcpMessage,
-) -> Result(LrcpMessage, Nil) {
-  use session <- result.try(parse_number(text))
-  Ok(constructor(session))
-}
-
-fn parse_two_fields(
-  text: String,
-  constructor: fn(Int, Int) -> LrcpMessage,
-) -> Result(LrcpMessage, Nil) {
-  use #(first_str, second_str) <- result.try(string.split_once(text, "/"))
-  use first <- result.try(parse_number(first_str))
-  use second <- result.try(parse_number(second_str))
-  Ok(constructor(first, second))
-}
-
-fn parse_data_fields(text: String) -> Result(LrcpMessage, Nil) {
-  use #(session_str, rest) <- result.try(string.split_once(text, "/"))
-  use session <- result.try(parse_number(session_str))
-  use #(pos_str, data) <- result.try(string.split_once(rest, "/"))
-  use pos <- result.try(parse_number(pos_str))
-  use _ <- result.try(validate_escaped_data(string.to_graphemes(data)))
-  Ok(Data(session:, pos:, data:))
-}
-
-fn validate_escaped_data(chars: List(String)) -> Result(Nil, Nil) {
+fn tokenize_loop(
+  chars: List(String),
+  acc: String,
+  tokens: List(lexer.Token(LrcpToken)),
+) -> Result(List(lexer.Token(LrcpToken)), Nil) {
   case chars {
-    [] -> Ok(Nil)
-    ["\\", "\\", ..rest] -> validate_escaped_data(rest)
-    ["\\", "/", ..rest] -> validate_escaped_data(rest)
+    [] -> Ok(list.reverse(flush_acc(acc, tokens)))
+    ["\\", "\\", ..rest] -> tokenize_loop(rest, acc <> "\\\\", tokens)
+    ["\\", "/", ..rest] -> tokenize_loop(rest, acc <> "\\/", tokens)
     ["\\", ..] -> Error(Nil)
-    ["/", ..] -> Error(Nil)
-    [_, ..rest] -> validate_escaped_data(rest)
+    ["/", ..rest] ->
+      tokenize_loop(rest, "", [make_token(Slash), ..flush_acc(acc, tokens)])
+    [c, ..rest] -> tokenize_loop(rest, acc <> c, tokens)
   }
+}
+
+fn flush_acc(
+  acc: String,
+  tokens: List(lexer.Token(LrcpToken)),
+) -> List(lexer.Token(LrcpToken)) {
+  case acc {
+    "" -> tokens
+    _ -> [make_token(Content(acc)), ..tokens]
+  }
+}
+
+fn make_token(value: LrcpToken) -> lexer.Token(LrcpToken) {
+  lexer.Token(span: lexer.Span(1, 1, 1, 1), lexeme: "", value: value)
+}
+
+fn lrcp_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
+  use _ <- nibble.do(nibble.token(Slash))
+  use msg <- nibble.do(
+    nibble.one_of([
+      connect_parser(),
+      close_parser(),
+      ack_parser(),
+      data_parser(),
+    ]),
+  )
+  use _ <- nibble.do(nibble.eof())
+  nibble.return(msg)
+}
+
+fn connect_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
+  use _ <- nibble.do(nibble.token(Content("connect")))
+  use _ <- nibble.do(nibble.token(Slash))
+  use session <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  nibble.return(Connect(session))
+}
+
+fn close_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
+  use _ <- nibble.do(nibble.token(Content("close")))
+  use _ <- nibble.do(nibble.token(Slash))
+  use session <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  nibble.return(Close(session))
+}
+
+fn ack_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
+  use _ <- nibble.do(nibble.token(Content("ack")))
+  use _ <- nibble.do(nibble.token(Slash))
+  use session <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  use length <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  nibble.return(Ack(session, length))
+}
+
+fn data_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
+  use _ <- nibble.do(nibble.token(Content("data")))
+  use _ <- nibble.do(nibble.token(Slash))
+  use session <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  use pos <- nibble.do(number_token())
+  use _ <- nibble.do(nibble.token(Slash))
+  use data <- nibble.do(nibble.one_of([content_token(), nibble.return("")]))
+  use _ <- nibble.do(nibble.token(Slash))
+  nibble.return(Data(session, pos, data))
+}
+
+fn number_token() -> nibble.Parser(Int, LrcpToken, Nil) {
+  nibble.take_map("number", fn(tok) {
+    case tok {
+      Content(s) ->
+        case int.parse(s) {
+          Ok(n) if n >= 0 && n < max_numeric_value -> Some(n)
+          _ -> None
+        }
+      _ -> None
+    }
+  })
+}
+
+fn content_token() -> nibble.Parser(String, LrcpToken, Nil) {
+  nibble.take_map("content", fn(tok) {
+    case tok {
+      Content(s) -> Some(s)
+      _ -> None
+    }
+  })
 }
 
 pub fn escape(text: String) -> String {
@@ -161,11 +217,12 @@ pub fn process_lines(line_buffer: String, new_data: String) -> #(String, String)
 
 fn split_and_reverse(text: String) -> #(String, String) {
   let parts = string.split(text, "\n")
+  let assert [remainder, ..complete_reversed] = list.reverse(parts)
   let reversed =
-    list.take(parts, list.length(parts) - 1)
+    complete_reversed
+    |> list.reverse
     |> list.map(fn(line) { string.reverse(line) <> "\n" })
     |> string.join("")
-  let remainder = list.last(parts) |> result.unwrap("")
   #(reversed, remainder)
 }
 

@@ -13,6 +13,8 @@ import gleam/set.{type Set}
 import gleam/string
 import glisten
 import logging
+import nibble
+import nibble/lexer
 
 pub type Command {
   Help
@@ -95,84 +97,121 @@ fn is_ascii_whitespace(n: Int) -> Bool {
 }
 
 pub fn parse_command(line: String) -> Result(Command, String) {
-  let trimmed = string.trim_end(line)
-  let parts = string.split(trimmed, " ")
+  let tokens = tokenize_command(line)
 
-  case parts {
-    [] -> Error("illegal method: ")
-    [cmd, ..args] -> {
-      case string.lowercase(cmd) {
-        "help" -> Ok(Help)
-        "get" -> parse_get(args)
-        "put" -> parse_put(args)
-        "list" -> parse_list(args)
-        other -> Error("illegal method: " <> other)
+  nibble.run(tokens, command_parser())
+  |> result.map_error(fn(_) { command_error(tokens) })
+}
+
+fn command_parser() -> nibble.Parser(Command, String, Nil) {
+  nibble.one_of([
+    help_parser(),
+    get_parser(),
+    put_parser(),
+    list_parser(),
+  ])
+}
+
+fn command_error(tokens: List(lexer.Token(String))) -> String {
+  case tokens {
+    [] -> "illegal method: "
+    [first, ..] ->
+      case string.lowercase(first.value) {
+        "get" -> "usage: GET file [revision]"
+        "put" -> "usage: PUT file length newline data"
+        "list" -> "usage: LIST dir"
+        other -> "illegal method: " <> other
       }
-    }
   }
 }
 
-fn parse_get(args: List(String)) -> Result(Command, String) {
-  case args {
-    [file] -> {
-      use <- bool.guard(
-        when: !is_valid_filename(file),
-        return: Error("usage: GET file [revision]"),
-      )
-      Ok(Get(file:, revision: None))
-    }
-    [file, rev_str] -> {
-      use <- bool.guard(
-        when: !is_valid_filename(file),
-        return: Error("usage: GET file [revision]"),
-      )
-      use rev <- result.try(parse_revision(rev_str))
-      Ok(Get(file:, revision: Some(rev)))
-    }
-    _ -> Error("usage: GET file [revision]")
-  }
+fn tokenize_command(input: String) -> List(lexer.Token(String)) {
+  input
+  |> string.trim_end
+  |> string.split(" ")
+  |> list.filter(fn(s) { s != "" })
+  |> list.map(fn(word) {
+    lexer.Token(span: lexer.Span(1, 1, 1, 1), lexeme: word, value: word)
+  })
 }
 
-fn parse_revision(s: String) -> Result(Int, String) {
-  use <- bool.guard(
-    when: !string.starts_with(s, "r"),
-    return: Error("usage: GET file [revision]"),
+fn command_token(name: String) -> nibble.Parser(Nil, String, Nil) {
+  nibble.take_map(name, fn(tok) {
+    case string.lowercase(tok) == name {
+      True -> Some(Nil)
+      False -> None
+    }
+  })
+}
+
+fn help_parser() -> nibble.Parser(Command, String, Nil) {
+  use _ <- nibble.do(command_token("help"))
+  nibble.return(Help)
+}
+
+fn filename_token() -> nibble.Parser(String, String, Nil) {
+  nibble.take_map("filename", fn(tok) {
+    case is_valid_filename(tok) {
+      True -> Some(tok)
+      False -> None
+    }
+  })
+}
+
+fn revision_token() -> nibble.Parser(Int, String, Nil) {
+  nibble.take_map("revision", fn(tok) {
+    case string.starts_with(tok, "r") {
+      False -> None
+      True ->
+        case int.parse(string.drop_start(tok, 1)) {
+          Ok(n) -> Some(n)
+          Error(_) -> None
+        }
+    }
+  })
+}
+
+fn integer_token() -> nibble.Parser(Int, String, Nil) {
+  nibble.take_map("integer", fn(tok) {
+    case int.parse(tok) {
+      Ok(n) -> Some(n)
+      Error(_) -> None
+    }
+  })
+}
+
+fn get_parser() -> nibble.Parser(Command, String, Nil) {
+  use _ <- nibble.do(command_token("get"))
+  use file <- nibble.do(filename_token())
+  use rev <- nibble.do(
+    nibble.one_of([
+      {
+        use r <- nibble.do(revision_token())
+        use _ <- nibble.do(nibble.eof())
+        nibble.return(Some(r))
+      },
+      {
+        use _ <- nibble.do(nibble.eof())
+        nibble.return(None)
+      },
+    ]),
   )
-
-  s
-  |> string.drop_start(1)
-  |> int.parse
-  |> result.replace_error("usage: GET file [revision]")
+  nibble.return(Get(file:, revision: rev))
 }
 
-fn parse_put(args: List(String)) -> Result(Command, String) {
-  case args {
-    [file, len_str] -> {
-      use <- bool.guard(
-        when: !is_valid_filename(file),
-        return: Error("usage: PUT file length newline data"),
-      )
-      use length <- result.try(
-        int.parse(len_str)
-        |> result.replace_error("usage: PUT file length newline data"),
-      )
-      Ok(Put(file:, length:))
-    }
-    _ -> Error("usage: PUT file length newline data")
-  }
+fn put_parser() -> nibble.Parser(Command, String, Nil) {
+  use _ <- nibble.do(command_token("put"))
+  use file <- nibble.do(filename_token())
+  use length <- nibble.do(integer_token())
+  use _ <- nibble.do(nibble.eof())
+  nibble.return(Put(file:, length:))
 }
 
-fn parse_list(args: List(String)) -> Result(Command, String) {
-  case args {
-    [dir] -> {
-      use <- bool.guard(
-        when: !is_valid_filename(dir),
-        return: Error("usage: LIST dir"),
-      )
-      Ok(List(directory: dir))
-    }
-    _ -> Error("usage: LIST dir")
-  }
+fn list_parser() -> nibble.Parser(Command, String, Nil) {
+  use _ <- nibble.do(command_token("list"))
+  use dir <- nibble.do(filename_token())
+  use _ <- nibble.do(nibble.eof())
+  nibble.return(List(directory: dir))
 }
 
 pub fn start_vcs() -> Subject(VcsMessage) {
@@ -447,9 +486,8 @@ fn dispatch_command(
       send_response(conn, "READY\n")
       process_buffer(state, conn)
     }
-    Ok(Get(file:, revision:)) -> {
+    Ok(Get(file:, revision:)) ->
       handle_get_command(state, conn, file, revision)
-    }
     Ok(Put(file:, length:)) -> {
       let state =
         ConnectionState(
@@ -458,9 +496,8 @@ fn dispatch_command(
         )
       process_buffer(state, conn)
     }
-    Ok(List(directory:)) -> {
+    Ok(List(directory:)) ->
       handle_list_command(state, conn, directory)
-    }
   }
 }
 

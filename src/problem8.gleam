@@ -1,3 +1,6 @@
+import bitty
+import bitty/bytes
+import bitty/num
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -78,25 +81,44 @@ fn transform_bytes_loop(
   }
 }
 
+fn cipher_op_parser() -> bitty.Parser(CipherOp) {
+  bitty.one_of([
+    {
+      use _ <- bitty.then(bytes.tag(<<1>>))
+      bitty.success(ReverseBits)
+    },
+    {
+      use _ <- bitty.then(bytes.tag(<<2>>))
+      use n <- bitty.then(num.u8())
+      bitty.success(Xor(n))
+    },
+    {
+      use _ <- bitty.then(bytes.tag(<<3>>))
+      bitty.success(XorPos)
+    },
+    {
+      use _ <- bitty.then(bytes.tag(<<4>>))
+      use n <- bitty.then(num.u8())
+      bitty.success(Add(n))
+    },
+    {
+      use _ <- bitty.then(bytes.tag(<<5>>))
+      bitty.success(AddPos)
+    },
+  ])
+}
+
+fn cipher_spec_parser() -> bitty.Parser(List(CipherOp)) {
+  use ops <- bitty.then(bitty.many(cipher_op_parser()))
+  use _ <- bitty.then(bytes.tag(<<0>>))
+  bitty.success(ops)
+}
+
 pub fn parse_cipher_spec(
   data: BitArray,
 ) -> Result(#(List(CipherOp), BitArray), Nil) {
-  parse_cipher_spec_loop(data, [])
-}
-
-fn parse_cipher_spec_loop(
-  data: BitArray,
-  acc: List(CipherOp),
-) -> Result(#(List(CipherOp), BitArray), Nil) {
-  case data {
-    <<0:8, rest:bytes>> -> Ok(#(list.reverse(acc), rest))
-    <<1:8, rest:bytes>> -> parse_cipher_spec_loop(rest, [ReverseBits, ..acc])
-    <<2:8, n:8, rest:bytes>> -> parse_cipher_spec_loop(rest, [Xor(n), ..acc])
-    <<3:8, rest:bytes>> -> parse_cipher_spec_loop(rest, [XorPos, ..acc])
-    <<4:8, n:8, rest:bytes>> -> parse_cipher_spec_loop(rest, [Add(n), ..acc])
-    <<5:8, rest:bytes>> -> parse_cipher_spec_loop(rest, [AddPos, ..acc])
-    _ -> Error(Nil)
-  }
+  bitty.run_partial(cipher_spec_parser(), on: data)
+  |> result.replace_error(Nil)
 }
 
 pub fn invert_op(op: CipherOp) -> CipherOp {

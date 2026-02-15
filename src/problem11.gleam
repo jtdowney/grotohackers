@@ -1,3 +1,6 @@
+import bitty
+import bitty/bytes
+import bitty/num.{BigEndian}
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -66,50 +69,133 @@ fn sum_bytes(data: BitArray, acc: Int) -> Int {
   }
 }
 
-pub fn parse_str(data: BitArray) -> Result(#(String, BitArray), ParseError) {
-  use #(len, rest) <- result.try(parse_u32(data))
-  use <- bool.guard(
-    when: bit_array.byte_size(rest) < len,
-    return: Error(NeedMoreData),
-  )
-
-  let assert <<str_bytes:bytes-size(len), remaining:bytes>> = rest
-  bit_array.to_string(str_bytes)
-  |> result.map(fn(s) { #(s, remaining) })
-  |> result.replace_error(InvalidMessage("Invalid UTF-8 in string"))
-}
-
-fn parse_u32(data: BitArray) -> Result(#(Int, BitArray), ParseError) {
-  case data {
-    <<value:unsigned-size(32)-big, rest:bytes>> -> Ok(#(value, rest))
-    _ -> Error(NeedMoreData)
+fn str_parser() -> bitty.Parser(String) {
+  use len <- bitty.then(num.u32(BigEndian))
+  use raw <- bitty.then(bytes.take(len))
+  case bit_array.to_string(raw) {
+    Ok(s) -> bitty.success(s)
+    Error(_) -> bitty.fail("Invalid UTF-8 in string")
   }
 }
 
-fn parse_array(
-  data: BitArray,
-  parser_fn: fn(BitArray) -> Result(#(a, BitArray), ParseError),
-) -> Result(#(List(a), BitArray), ParseError) {
-  use #(count, rest) <- result.try(parse_u32(data))
-  parse_array_elements(rest, parser_fn, count, [])
-}
-
-fn parse_array_elements(
-  data: BitArray,
-  parser_fn: fn(BitArray) -> Result(#(a, BitArray), ParseError),
-  remaining: Int,
-  acc: List(a),
-) -> Result(#(List(a), BitArray), ParseError) {
-  use <- bool.guard(
-    when: remaining == 0,
-    return: Ok(#(list.reverse(acc), data)),
-  )
-
-  use #(item, rest) <- result.try(parser_fn(data))
-  parse_array_elements(rest, parser_fn, remaining - 1, [item, ..acc])
+pub fn parse_str(data: BitArray) -> Result(#(String, BitArray), ParseError) {
+  bitty.run_partial(str_parser(), on: data)
+  |> result.map_error(map_parse_error)
 }
 
 const max_message_length = 1_000_000
+
+fn map_parse_error(err: bitty.BittyError) -> ParseError {
+  case err.message {
+    Some(msg) -> InvalidMessage(msg)
+    None -> NeedMoreData
+  }
+}
+
+fn hello_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x50>>))
+  use protocol <- bitty.then(str_parser())
+  use version <- bitty.then(num.u32(BigEndian))
+  bitty.success(Hello(protocol:, version:))
+}
+
+fn error_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x51>>))
+  use message <- bitty.then(str_parser())
+  bitty.success(MsgError(message:))
+}
+
+fn ok_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x52>>))
+  bitty.success(MsgOk)
+}
+
+fn dial_authority_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x53>>))
+  use site <- bitty.then(num.u32(BigEndian))
+  bitty.success(DialAuthority(site:))
+}
+
+fn population_target_parser() -> bitty.Parser(PopulationTarget) {
+  use species <- bitty.then(str_parser())
+  use min <- bitty.then(num.u32(BigEndian))
+  use max <- bitty.then(num.u32(BigEndian))
+  bitty.success(PopulationTarget(species:, min:, max:))
+}
+
+fn target_populations_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x54>>))
+  use site <- bitty.then(num.u32(BigEndian))
+  use count <- bitty.then(num.u32(BigEndian))
+  use populations <- bitty.then(bitty.repeat(
+    population_target_parser(),
+    times: count,
+  ))
+  bitty.success(TargetPopulations(site:, populations:))
+}
+
+fn policy_action_parser() -> bitty.Parser(PolicyAction) {
+  bitty.one_of([
+    {
+      use _ <- bitty.then(bytes.tag(<<0x90>>))
+      bitty.success(Cull)
+    },
+    {
+      use _ <- bitty.then(bytes.tag(<<0xA0>>))
+      bitty.success(Conserve)
+    },
+  ])
+}
+
+fn create_policy_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x55>>))
+  use species <- bitty.then(str_parser())
+  use action <- bitty.then(policy_action_parser())
+  bitty.success(CreatePolicy(species:, action:))
+}
+
+fn delete_policy_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x56>>))
+  use policy <- bitty.then(num.u32(BigEndian))
+  bitty.success(DeletePolicy(policy:))
+}
+
+fn policy_result_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x57>>))
+  use policy <- bitty.then(num.u32(BigEndian))
+  bitty.success(PolicyResult(policy:))
+}
+
+fn population_observation_parser() -> bitty.Parser(PopulationObservation) {
+  use species <- bitty.then(str_parser())
+  use count <- bitty.then(num.u32(BigEndian))
+  bitty.success(PopulationObservation(species:, count:))
+}
+
+fn site_visit_parser() -> bitty.Parser(Message) {
+  use _ <- bitty.then(bytes.tag(<<0x58>>))
+  use site <- bitty.then(num.u32(BigEndian))
+  use count <- bitty.then(num.u32(BigEndian))
+  use populations <- bitty.then(bitty.repeat(
+    population_observation_parser(),
+    times: count,
+  ))
+  bitty.success(SiteVisit(site:, populations:))
+}
+
+fn message_content_parser() -> bitty.Parser(Message) {
+  bitty.one_of([
+    hello_parser(),
+    error_parser(),
+    ok_parser(),
+    dial_authority_parser(),
+    target_populations_parser(),
+    create_policy_parser(),
+    delete_policy_parser(),
+    policy_result_parser(),
+    site_visit_parser(),
+  ])
+}
 
 pub fn parse_message(data: BitArray) -> Result(#(Message, BitArray), ParseError) {
   use <- bool.guard(
@@ -141,122 +227,18 @@ pub fn parse_message(data: BitArray) -> Result(#(Message, BitArray), ParseError)
     content:bytes-size(content_size),
     _checksum:8,
   >> = frame
+  let body = <<type_byte:8, content:bits>>
 
-  case type_byte {
-    0x50 -> parse_hello(content)
-    0x51 -> parse_error(content)
-    0x52 -> parse_ok(content)
-    0x53 -> parse_dial_authority(content)
-    0x54 -> parse_target_populations(content)
-    0x55 -> parse_create_policy(content)
-    0x56 -> parse_delete_policy(content)
-    0x57 -> parse_policy_result(content)
-    0x58 -> parse_site_visit(content)
-    other -> Error(UnknownMessageType(other))
-  }
-  |> result.map_error(fn(e) {
-    case e {
-      NeedMoreData -> InvalidMessage("Truncated message content")
-      other -> other
+  bitty.run(message_content_parser(), on: body)
+  |> result.map(fn(msg) { #(msg, remaining) })
+  |> result.map_error(fn(err) {
+    case err.at.byte, err.message, body {
+      0, _, <<tag:8, _:bytes>> -> UnknownMessageType(tag)
+      0, _, _ -> InvalidMessage("Truncated message content")
+      _, Some(msg), _ -> InvalidMessage(msg)
+      _, None, _ -> InvalidMessage("Truncated message content")
     }
   })
-  |> result.map(fn(msg) { #(msg, remaining) })
-}
-
-fn parse_hello(content: BitArray) -> Result(Message, ParseError) {
-  use #(protocol, rest) <- result.try(parse_str(content))
-  case rest {
-    <<version:unsigned-size(32)-big>> -> Ok(Hello(protocol:, version:))
-    _ -> Error(InvalidMessage("Invalid Hello message"))
-  }
-}
-
-fn parse_error(content: BitArray) -> Result(Message, ParseError) {
-  use #(message, rest) <- result.try(parse_str(content))
-  use <- bool.guard(
-    when: bit_array.byte_size(rest) != 0,
-    return: Error(InvalidMessage("Trailing data in Error message")),
-  )
-  Ok(MsgError(message:))
-}
-
-fn parse_ok(content: BitArray) -> Result(Message, ParseError) {
-  use <- bool.guard(
-    when: bit_array.byte_size(content) != 0,
-    return: Error(InvalidMessage("OK message should have no content")),
-  )
-  Ok(MsgOk)
-}
-
-fn parse_dial_authority(content: BitArray) -> Result(Message, ParseError) {
-  case content {
-    <<site:unsigned-size(32)-big>> -> Ok(DialAuthority(site:))
-    _ -> Error(InvalidMessage("Invalid DialAuthority message"))
-  }
-}
-
-fn parse_target_populations(content: BitArray) -> Result(Message, ParseError) {
-  use #(site, rest) <- result.try(parse_u32(content))
-  use #(populations, _) <- result.try(parse_array(rest, parse_population_target))
-  Ok(TargetPopulations(site:, populations:))
-}
-
-fn parse_population_target(
-  data: BitArray,
-) -> Result(#(PopulationTarget, BitArray), ParseError) {
-  use #(species, rest) <- result.try(parse_str(data))
-  case rest {
-    <<min:unsigned-size(32)-big, max:unsigned-size(32)-big, remaining:bytes>> ->
-      Ok(#(PopulationTarget(species:, min:, max:), remaining))
-    _ -> Error(NeedMoreData)
-  }
-}
-
-fn parse_create_policy(content: BitArray) -> Result(Message, ParseError) {
-  use #(species, rest) <- result.try(parse_str(content))
-  case rest {
-    <<action_byte:8>> ->
-      case action_byte {
-        0x90 -> Ok(CreatePolicy(species:, action: Cull))
-        0xA0 -> Ok(CreatePolicy(species:, action: Conserve))
-        _ -> Error(InvalidMessage("Invalid policy action"))
-      }
-    _ -> Error(InvalidMessage("Invalid CreatePolicy message"))
-  }
-}
-
-fn parse_delete_policy(content: BitArray) -> Result(Message, ParseError) {
-  case content {
-    <<policy:unsigned-size(32)-big>> -> Ok(DeletePolicy(policy:))
-    _ -> Error(InvalidMessage("Invalid DeletePolicy message"))
-  }
-}
-
-fn parse_policy_result(content: BitArray) -> Result(Message, ParseError) {
-  case content {
-    <<policy:unsigned-size(32)-big>> -> Ok(PolicyResult(policy:))
-    _ -> Error(InvalidMessage("Invalid PolicyResult message"))
-  }
-}
-
-fn parse_site_visit(content: BitArray) -> Result(Message, ParseError) {
-  use #(site, rest) <- result.try(parse_u32(content))
-  use #(populations, _) <- result.try(parse_array(
-    rest,
-    parse_population_observation,
-  ))
-  Ok(SiteVisit(site:, populations:))
-}
-
-fn parse_population_observation(
-  data: BitArray,
-) -> Result(#(PopulationObservation, BitArray), ParseError) {
-  use #(species, rest) <- result.try(parse_str(data))
-  case rest {
-    <<count:unsigned-size(32)-big, remaining:bytes>> ->
-      Ok(#(PopulationObservation(species:, count:), remaining))
-    _ -> Error(NeedMoreData)
-  }
 }
 
 pub fn encode_message(msg: Message) -> BitArray {
@@ -268,14 +250,15 @@ pub fn encode_message(msg: Message) -> BitArray {
     MsgError(message:) -> #(0x51, encode_str(message))
     MsgOk -> #(0x52, <<>>)
     DialAuthority(site:) -> #(0x53, <<site:size(32)-big>>)
-    TargetPopulations(_, _) -> #(0x54, <<>>)
+    TargetPopulations(_, _) ->
+      panic as "TargetPopulations encoding not implemented"
     CreatePolicy(species:, action:) -> #(
       0x55,
       encode_create_policy_content(species, action),
     )
     DeletePolicy(policy:) -> #(0x56, <<policy:size(32)-big>>)
     PolicyResult(policy:) -> #(0x57, <<policy:size(32)-big>>)
-    SiteVisit(_, _) -> #(0x58, <<>>)
+    SiteVisit(_, _) -> panic as "SiteVisit encoding not implemented"
   }
 
   let content_size = bit_array.byte_size(content)
@@ -757,7 +740,7 @@ fn handle_client_packet(
     Error(reason) -> send_error_and_disconnect(conn, reason)
     Ok(#(messages, new_buffer)) -> {
       let new_state = ClientState(..state, buffer: new_buffer)
-      process_client_messages(new_state, messages, conn, state.site_manager)
+      process_client_messages(new_state, messages, conn)
     }
   }
 }
@@ -766,14 +749,13 @@ fn process_client_messages(
   state: ClientState,
   messages: List(Message),
   conn: glisten.Connection(Nil),
-  site_manager: Subject(SiteManagerMessage),
 ) -> glisten.Next(ClientState, glisten.Message(Nil)) {
   case messages {
     [] -> glisten.continue(state)
     [msg, ..rest] ->
-      case handle_client_message(state, msg, site_manager) {
+      case handle_client_message(state, msg, state.site_manager) {
         Ok(new_state) ->
-          process_client_messages(new_state, rest, conn, site_manager)
+          process_client_messages(new_state, rest, conn)
         Error(reason) -> send_error_and_disconnect(conn, reason)
       }
   }

@@ -754,8 +754,7 @@ fn process_client_messages(
     [] -> glisten.continue(state)
     [msg, ..rest] ->
       case handle_client_message(state, msg, state.site_manager) {
-        Ok(new_state) ->
-          process_client_messages(new_state, rest, conn)
+        Ok(new_state) -> process_client_messages(new_state, rest, conn)
         Error(reason) -> send_error_and_disconnect(conn, reason)
       }
   }

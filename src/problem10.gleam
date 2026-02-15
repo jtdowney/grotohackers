@@ -486,8 +486,7 @@ fn dispatch_command(
       send_response(conn, "READY\n")
       process_buffer(state, conn)
     }
-    Ok(Get(file:, revision:)) ->
-      handle_get_command(state, conn, file, revision)
+    Ok(Get(file:, revision:)) -> handle_get_command(state, conn, file, revision)
     Ok(Put(file:, length:)) -> {
       let state =
         ConnectionState(
@@ -496,8 +495,7 @@ fn dispatch_command(
         )
       process_buffer(state, conn)
     }
-    Ok(List(directory:)) ->
-      handle_list_command(state, conn, directory)
+    Ok(List(directory:)) -> handle_list_command(state, conn, directory)
   }
 }
 

@@ -1,6 +1,7 @@
 import bitty
 import bitty/bytes
 import bitty/num.{BigEndian}
+import bitty/string as s
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -108,11 +109,7 @@ pub type ServerState {
 
 fn string_parser() -> bitty.Parser(String) {
   use len <- bitty.then(num.u8())
-  use raw <- bitty.then(bytes.take(len))
-  case bit_array.to_string(raw) {
-    Ok(s) -> bitty.success(s)
-    Error(_) -> bitty.fail("Invalid UTF-8 in string")
-  }
+  s.utf8(len)
 }
 
 fn plate_parser() -> bitty.Parser(ClientMessage) {
@@ -123,9 +120,8 @@ fn plate_parser() -> bitty.Parser(ClientMessage) {
 }
 
 fn want_heartbeat_parser() -> bitty.Parser(ClientMessage) {
-  use _ <- bitty.then(bytes.tag(<<0x40>>))
-  use interval <- bitty.then(num.u32(BigEndian))
-  bitty.success(WantHeartbeat(interval:))
+  bitty.preceded(bytes.tag(<<0x40>>), num.u32(BigEndian))
+  |> bitty.map(WantHeartbeat)
 }
 
 fn i_am_camera_parser() -> bitty.Parser(ClientMessage) {
@@ -138,8 +134,7 @@ fn i_am_camera_parser() -> bitty.Parser(ClientMessage) {
 
 fn i_am_dispatcher_parser() -> bitty.Parser(ClientMessage) {
   use _ <- bitty.then(bytes.tag(<<0x81>>))
-  use count <- bitty.then(num.u8())
-  use roads <- bitty.then(bitty.repeat(num.u16(BigEndian), times: count))
+  use roads <- bitty.then(bitty.length_repeat(num.u8(), run: num.u16(BigEndian)))
   bitty.success(IAmDispatcher(roads:))
 }
 

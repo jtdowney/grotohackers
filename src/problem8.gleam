@@ -83,35 +83,16 @@ fn transform_bytes_loop(
 
 fn cipher_op_parser() -> bitty.Parser(CipherOp) {
   bitty.one_of([
-    {
-      use _ <- bitty.then(bytes.tag(<<1>>))
-      bitty.success(ReverseBits)
-    },
-    {
-      use _ <- bitty.then(bytes.tag(<<2>>))
-      use n <- bitty.then(num.u8())
-      bitty.success(Xor(n))
-    },
-    {
-      use _ <- bitty.then(bytes.tag(<<3>>))
-      bitty.success(XorPos)
-    },
-    {
-      use _ <- bitty.then(bytes.tag(<<4>>))
-      use n <- bitty.then(num.u8())
-      bitty.success(Add(n))
-    },
-    {
-      use _ <- bitty.then(bytes.tag(<<5>>))
-      bitty.success(AddPos)
-    },
+    bytes.tag(<<1>>) |> bitty.replace(ReverseBits),
+    bitty.preceded(bytes.tag(<<2>>), num.u8()) |> bitty.map(Xor),
+    bytes.tag(<<3>>) |> bitty.replace(XorPos),
+    bitty.preceded(bytes.tag(<<4>>), num.u8()) |> bitty.map(Add),
+    bytes.tag(<<5>>) |> bitty.replace(AddPos),
   ])
 }
 
 fn cipher_spec_parser() -> bitty.Parser(List(CipherOp)) {
-  use ops <- bitty.then(bitty.many(cipher_op_parser()))
-  use _ <- bitty.then(bytes.tag(<<0>>))
-  bitty.success(ops)
+  bitty.terminated(bitty.many(cipher_op_parser()), bytes.tag(<<0>>))
 }
 
 pub fn parse_cipher_spec(

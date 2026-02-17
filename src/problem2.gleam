@@ -70,16 +70,18 @@ fn handle_client_data(
 }
 
 fn insert_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<73>>))
-  use ts <- bitty.then(num.i32(BigEndian))
-  use price <- bitty.then(num.i32(BigEndian))
+  use #(ts, price) <- bitty.then(bitty.preceded(
+    bytes.tag(<<73>>),
+    bitty.pair(num.i32(BigEndian), num.i32(BigEndian)),
+  ))
   bitty.success(Insert(timestamp: ts, price: price))
 }
 
 fn query_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<81>>))
-  use min <- bitty.then(num.i32(BigEndian))
-  use max <- bitty.then(num.i32(BigEndian))
+  use #(min, max) <- bitty.then(bitty.preceded(
+    bytes.tag(<<81>>),
+    bitty.pair(num.i32(BigEndian), num.i32(BigEndian)),
+  ))
   bitty.success(Query(mintime: min, maxtime: max))
 }
 

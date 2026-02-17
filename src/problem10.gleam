@@ -1,3 +1,5 @@
+import bitty
+import bitty/string as s
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -13,8 +15,6 @@ import gleam/set.{type Set}
 import gleam/string
 import glisten
 import logging
-import nibble
-import nibble/lexer
 
 pub type Command {
   Help
@@ -97,121 +97,107 @@ fn is_ascii_whitespace(n: Int) -> Bool {
 }
 
 pub fn parse_command(line: String) -> Result(Command, String) {
-  let tokens = tokenize_command(line)
+  let trimmed = string.trim_end(line)
+  let input = bit_array.from_string(trimmed)
 
-  nibble.run(tokens, command_parser())
-  |> result.map_error(fn(_) { command_error(tokens) })
+  bitty.run(command_parser(), on: input)
+  |> result.map_error(fn(_) { command_error(trimmed) })
 }
 
-fn command_parser() -> nibble.Parser(Command, String, Nil) {
-  nibble.one_of([
-    help_parser(),
-    get_parser(),
-    put_parser(),
+fn command_error(line: String) -> String {
+  let first_word =
+    line
+    |> string.trim
+    |> string.split(" ")
+    |> list.first
+    |> result.unwrap("")
+    |> string.lowercase
+
+  case first_word {
+    "" -> "illegal method: "
+    "get" -> "usage: GET file [revision]"
+    "put" -> "usage: PUT file length newline data"
+    "list" -> "usage: LIST dir"
+    other -> "illegal method: " <> other
+  }
+}
+
+fn command_parser() -> bitty.Parser(Command) {
+  bitty.one_of([
+    bitty.attempt(help_parser()),
+    bitty.attempt(get_parser()),
+    bitty.attempt(put_parser()),
     list_parser(),
   ])
 }
 
-fn command_error(tokens: List(lexer.Token(String))) -> String {
-  case tokens {
-    [] -> "illegal method: "
-    [first, ..] ->
-      case string.lowercase(first.value) {
-        "get" -> "usage: GET file [revision]"
-        "put" -> "usage: PUT file length newline data"
-        "list" -> "usage: LIST dir"
-        other -> "illegal method: " <> other
-      }
-  }
+fn command_token(name: String) -> bitty.Parser(Nil) {
+  s.alpha1()
+  |> bitty.verify(fn(word) { string.lowercase(word) == name })
+  |> bitty.replace(Nil)
 }
 
-fn tokenize_command(input: String) -> List(lexer.Token(String)) {
-  input
-  |> string.trim_end
-  |> string.split(" ")
-  |> list.filter(fn(s) { s != "" })
-  |> list.map(fn(word) {
-    lexer.Token(span: lexer.Span(1, 1, 1, 1), lexeme: word, value: word)
-  })
+fn sp() -> bitty.Parser(Nil) {
+  s.space1() |> bitty.replace(Nil)
 }
 
-fn command_token(name: String) -> nibble.Parser(Nil, String, Nil) {
-  nibble.take_map(name, fn(tok) {
-    case string.lowercase(tok) == name {
-      True -> Some(Nil)
-      False -> None
-    }
-  })
+fn help_parser() -> bitty.Parser(Command) {
+  use _ <- bitty.then(command_token("help"))
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Help)
 }
 
-fn help_parser() -> nibble.Parser(Command, String, Nil) {
-  use _ <- nibble.do(command_token("help"))
-  nibble.return(Help)
+fn non_whitespace_token() -> bitty.Parser(String) {
+  s.take_while1(fn(g) { !is_whitespace(g) })
 }
 
-fn filename_token() -> nibble.Parser(String, String, Nil) {
-  nibble.take_map("filename", fn(tok) {
-    case is_valid_filename(tok) {
-      True -> Some(tok)
-      False -> None
-    }
-  })
+fn filename_token() -> bitty.Parser(String) {
+  non_whitespace_token()
+  |> bitty.verify(is_valid_filename)
 }
 
-fn revision_token() -> nibble.Parser(Int, String, Nil) {
-  nibble.take_map("revision", fn(tok) {
-    case string.starts_with(tok, "r") {
-      False -> None
-      True ->
-        case int.parse(string.drop_start(tok, 1)) {
-          Ok(n) -> Some(n)
-          Error(_) -> None
-        }
-    }
-  })
+fn revision_token() -> bitty.Parser(Int) {
+  use _ <- bitty.then(s.literal("r"))
+  s.integer()
 }
 
-fn integer_token() -> nibble.Parser(Int, String, Nil) {
-  nibble.take_map("integer", fn(tok) {
-    case int.parse(tok) {
-      Ok(n) -> Some(n)
-      Error(_) -> None
-    }
-  })
-}
-
-fn get_parser() -> nibble.Parser(Command, String, Nil) {
-  use _ <- nibble.do(command_token("get"))
-  use file <- nibble.do(filename_token())
-  use rev <- nibble.do(
-    nibble.one_of([
+fn get_parser() -> bitty.Parser(Command) {
+  use _ <- bitty.then(command_token("get"))
+  use _ <- bitty.then(sp())
+  use file <- bitty.then(filename_token())
+  use rev <- bitty.then(
+    bitty.one_of([
+      bitty.attempt({
+        use _ <- bitty.then(sp())
+        use r <- bitty.then(revision_token())
+        use _ <- bitty.then(bitty.end())
+        bitty.success(Some(r))
+      }),
       {
-        use r <- nibble.do(revision_token())
-        use _ <- nibble.do(nibble.eof())
-        nibble.return(Some(r))
-      },
-      {
-        use _ <- nibble.do(nibble.eof())
-        nibble.return(None)
+        use _ <- bitty.then(bitty.end())
+        bitty.success(None)
       },
     ]),
   )
-  nibble.return(Get(file:, revision: rev))
+  bitty.success(Get(file:, revision: rev))
 }
 
-fn put_parser() -> nibble.Parser(Command, String, Nil) {
-  use _ <- nibble.do(command_token("put"))
-  use file <- nibble.do(filename_token())
-  use length <- nibble.do(integer_token())
-  use _ <- nibble.do(nibble.eof())
-  nibble.return(Put(file:, length:))
+fn put_parser() -> bitty.Parser(Command) {
+  use _ <- bitty.then(command_token("put"))
+  use _ <- bitty.then(sp())
+  use file <- bitty.then(filename_token())
+  use _ <- bitty.then(sp())
+  use length <- bitty.then(s.integer())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Put(file:, length:))
 }
 
-fn list_parser() -> nibble.Parser(Command, String, Nil) {
-  use _ <- nibble.do(command_token("list"))
-  use dir <- nibble.do(filename_token())
-  use _ <- nibble.do(nibble.eof())
-  nibble.return(List(directory: dir))
+fn list_parser() -> bitty.Parser(Command) {
+  use _ <- bitty.then(command_token("list"))
+  use _ <- bitty.then(sp())
+  use dir <- bitty.then(filename_token())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(List(directory: dir))
 }
 
 pub fn start_vcs() -> Subject(VcsMessage) {

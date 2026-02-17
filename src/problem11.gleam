@@ -1,6 +1,7 @@
 import bitty
 import bitty/bytes
 import bitty/num.{BigEndian}
+import bitty/string as s
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -71,11 +72,7 @@ fn sum_bytes(data: BitArray, acc: Int) -> Int {
 
 fn str_parser() -> bitty.Parser(String) {
   use len <- bitty.then(num.u32(BigEndian))
-  use raw <- bitty.then(bytes.take(len))
-  case bit_array.to_string(raw) {
-    Ok(s) -> bitty.success(s)
-    Error(_) -> bitty.fail("Invalid UTF-8 in string")
-  }
+  s.utf8(len)
 }
 
 pub fn parse_str(data: BitArray) -> Result(#(String, BitArray), ParseError) {
@@ -100,20 +97,17 @@ fn hello_parser() -> bitty.Parser(Message) {
 }
 
 fn error_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<0x51>>))
-  use message <- bitty.then(str_parser())
-  bitty.success(MsgError(message:))
+  bitty.preceded(bytes.tag(<<0x51>>), str_parser())
+  |> bitty.map(MsgError)
 }
 
 fn ok_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<0x52>>))
-  bitty.success(MsgOk)
+  bytes.tag(<<0x52>>) |> bitty.replace(MsgOk)
 }
 
 fn dial_authority_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<0x53>>))
-  use site <- bitty.then(num.u32(BigEndian))
-  bitty.success(DialAuthority(site:))
+  bitty.preceded(bytes.tag(<<0x53>>), num.u32(BigEndian))
+  |> bitty.map(DialAuthority)
 }
 
 fn population_target_parser() -> bitty.Parser(PopulationTarget) {
@@ -126,24 +120,17 @@ fn population_target_parser() -> bitty.Parser(PopulationTarget) {
 fn target_populations_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x54>>))
   use site <- bitty.then(num.u32(BigEndian))
-  use count <- bitty.then(num.u32(BigEndian))
-  use populations <- bitty.then(bitty.repeat(
-    population_target_parser(),
-    times: count,
+  use populations <- bitty.then(bitty.length_repeat(
+    num.u32(BigEndian),
+    run: population_target_parser(),
   ))
   bitty.success(TargetPopulations(site:, populations:))
 }
 
 fn policy_action_parser() -> bitty.Parser(PolicyAction) {
   bitty.one_of([
-    {
-      use _ <- bitty.then(bytes.tag(<<0x90>>))
-      bitty.success(Cull)
-    },
-    {
-      use _ <- bitty.then(bytes.tag(<<0xA0>>))
-      bitty.success(Conserve)
-    },
+    bytes.tag(<<0x90>>) |> bitty.replace(Cull),
+    bytes.tag(<<0xA0>>) |> bitty.replace(Conserve),
   ])
 }
 
@@ -155,15 +142,13 @@ fn create_policy_parser() -> bitty.Parser(Message) {
 }
 
 fn delete_policy_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<0x56>>))
-  use policy <- bitty.then(num.u32(BigEndian))
-  bitty.success(DeletePolicy(policy:))
+  bitty.preceded(bytes.tag(<<0x56>>), num.u32(BigEndian))
+  |> bitty.map(DeletePolicy)
 }
 
 fn policy_result_parser() -> bitty.Parser(Message) {
-  use _ <- bitty.then(bytes.tag(<<0x57>>))
-  use policy <- bitty.then(num.u32(BigEndian))
-  bitty.success(PolicyResult(policy:))
+  bitty.preceded(bytes.tag(<<0x57>>), num.u32(BigEndian))
+  |> bitty.map(PolicyResult)
 }
 
 fn population_observation_parser() -> bitty.Parser(PopulationObservation) {
@@ -175,10 +160,9 @@ fn population_observation_parser() -> bitty.Parser(PopulationObservation) {
 fn site_visit_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x58>>))
   use site <- bitty.then(num.u32(BigEndian))
-  use count <- bitty.then(num.u32(BigEndian))
-  use populations <- bitty.then(bitty.repeat(
-    population_observation_parser(),
-    times: count,
+  use populations <- bitty.then(bitty.length_repeat(
+    num.u32(BigEndian),
+    run: population_observation_parser(),
   ))
   bitty.success(SiteVisit(site:, populations:))
 }

@@ -1,3 +1,5 @@
+import bitty
+import bitty/string as s
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -10,13 +12,6 @@ import gleam/result
 import gleam/string
 import grammy
 import logging
-import nibble
-import nibble/lexer
-
-pub type LrcpToken {
-  Slash
-  Content(String)
-}
 
 pub type LrcpMessage {
   Connect(session: Int)
@@ -64,9 +59,7 @@ pub fn parse_message(data: BitArray) -> Result(LrcpMessage, Nil) {
     return: Error(Nil),
   )
 
-  use text <- result.try(bit_array.to_string(data))
-  use tokens <- result.try(tokenize(text))
-  nibble.run(tokens, lrcp_parser())
+  bitty.run(lrcp_parser(), on: data)
   |> result.replace_error(Nil)
 }
 
@@ -87,112 +80,78 @@ pub fn serialize_message(msg: LrcpMessage) -> String {
   }
 }
 
-fn tokenize(input: String) -> Result(List(lexer.Token(LrcpToken)), Nil) {
-  tokenize_loop(string.to_graphemes(input), "", [])
+fn slash() -> bitty.Parser(Nil) {
+  s.literal("/")
 }
 
-fn tokenize_loop(
-  chars: List(String),
-  acc: String,
-  tokens: List(lexer.Token(LrcpToken)),
-) -> Result(List(lexer.Token(LrcpToken)), Nil) {
-  case chars {
-    [] -> Ok(list.reverse(flush_acc(acc, tokens)))
-    ["\\", "\\", ..rest] -> tokenize_loop(rest, acc <> "\\\\", tokens)
-    ["\\", "/", ..rest] -> tokenize_loop(rest, acc <> "\\/", tokens)
-    ["\\", ..] -> Error(Nil)
-    ["/", ..rest] ->
-      tokenize_loop(rest, "", [make_token(Slash), ..flush_acc(acc, tokens)])
-    [c, ..rest] -> tokenize_loop(rest, acc <> c, tokens)
-  }
+fn number_parser() -> bitty.Parser(Int) {
+  s.integer()
+  |> bitty.verify(fn(n) { n >= 0 && n < max_numeric_value })
 }
 
-fn flush_acc(
-  acc: String,
-  tokens: List(lexer.Token(LrcpToken)),
-) -> List(lexer.Token(LrcpToken)) {
-  case acc {
-    "" -> tokens
-    _ -> [make_token(Content(acc)), ..tokens]
-  }
+fn escaped_char() -> bitty.Parser(String) {
+  bitty.one_of([
+    bitty.attempt(s.literal("\\/") |> bitty.replace("\\/")),
+    bitty.attempt(s.literal("\\\\") |> bitty.replace("\\\\")),
+    s.grapheme_if(fn(c) { c != "/" && c != "\\" }),
+  ])
 }
 
-fn make_token(value: LrcpToken) -> lexer.Token(LrcpToken) {
-  lexer.Token(span: lexer.Span(1, 1, 1, 1), lexeme: "", value: value)
+fn content_parser() -> bitty.Parser(String) {
+  bitty.many(escaped_char())
+  |> bitty.map(string.join(_, ""))
 }
 
-fn lrcp_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
-  use _ <- nibble.do(nibble.token(Slash))
-  use msg <- nibble.do(
-    nibble.one_of([
-      connect_parser(),
-      close_parser(),
-      ack_parser(),
-      data_parser(),
-    ]),
-  )
-  use _ <- nibble.do(nibble.eof())
-  nibble.return(msg)
+fn lrcp_parser() -> bitty.Parser(LrcpMessage) {
+  use _ <- bitty.then(slash())
+  bitty.one_of([
+    bitty.attempt(connect_parser()),
+    bitty.attempt(close_parser()),
+    bitty.attempt(ack_parser()),
+    data_parser(),
+  ])
 }
 
-fn connect_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
-  use _ <- nibble.do(nibble.token(Content("connect")))
-  use _ <- nibble.do(nibble.token(Slash))
-  use session <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  nibble.return(Connect(session))
+fn connect_parser() -> bitty.Parser(LrcpMessage) {
+  use _ <- bitty.then(s.literal("connect"))
+  use _ <- bitty.then(slash())
+  use session <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Connect(session))
 }
 
-fn close_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
-  use _ <- nibble.do(nibble.token(Content("close")))
-  use _ <- nibble.do(nibble.token(Slash))
-  use session <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  nibble.return(Close(session))
+fn close_parser() -> bitty.Parser(LrcpMessage) {
+  use _ <- bitty.then(s.literal("close"))
+  use _ <- bitty.then(slash())
+  use session <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Close(session))
 }
 
-fn ack_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
-  use _ <- nibble.do(nibble.token(Content("ack")))
-  use _ <- nibble.do(nibble.token(Slash))
-  use session <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  use length <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  nibble.return(Ack(session, length))
+fn ack_parser() -> bitty.Parser(LrcpMessage) {
+  use _ <- bitty.then(s.literal("ack"))
+  use _ <- bitty.then(slash())
+  use session <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use length <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Ack(session, length))
 }
 
-fn data_parser() -> nibble.Parser(LrcpMessage, LrcpToken, Nil) {
-  use _ <- nibble.do(nibble.token(Content("data")))
-  use _ <- nibble.do(nibble.token(Slash))
-  use session <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  use pos <- nibble.do(number_token())
-  use _ <- nibble.do(nibble.token(Slash))
-  use data <- nibble.do(nibble.one_of([content_token(), nibble.return("")]))
-  use _ <- nibble.do(nibble.token(Slash))
-  nibble.return(Data(session, pos, data))
-}
-
-fn number_token() -> nibble.Parser(Int, LrcpToken, Nil) {
-  nibble.take_map("number", fn(tok) {
-    case tok {
-      Content(s) ->
-        case int.parse(s) {
-          Ok(n) if n >= 0 && n < max_numeric_value -> Some(n)
-          _ -> None
-        }
-      _ -> None
-    }
-  })
-}
-
-fn content_token() -> nibble.Parser(String, LrcpToken, Nil) {
-  nibble.take_map("content", fn(tok) {
-    case tok {
-      Content(s) -> Some(s)
-      _ -> None
-    }
-  })
+fn data_parser() -> bitty.Parser(LrcpMessage) {
+  use _ <- bitty.then(s.literal("data"))
+  use _ <- bitty.then(slash())
+  use session <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use pos <- bitty.then(number_parser())
+  use _ <- bitty.then(slash())
+  use data <- bitty.then(content_parser())
+  use _ <- bitty.then(slash())
+  use _ <- bitty.then(bitty.end())
+  bitty.success(Data(session, pos, data))
 }
 
 pub fn escape(text: String) -> String {

@@ -8,7 +8,7 @@ import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/order
 import gleam/otp/actor
 import gleam/result
@@ -16,6 +16,7 @@ import gleam/string
 import gleamy/priority_queue.{type Queue as PQueue}
 import glisten
 import logging
+import splitter
 
 pub type Counter
 
@@ -136,17 +137,18 @@ pub fn process_buffer(
   buffer: String,
   new_data: String,
 ) -> #(List(String), String) {
-  let full_buffer = buffer <> new_data
-  let parts = string.split(full_buffer, "\n")
+  let line_ends = splitter.new(["\r\n", "\n"])
+  extract_lines(line_ends, buffer <> new_data, [])
+}
 
-  case list.reverse(parts) {
-    [] -> #([], "")
-    [remainder, ..complete_reversed] -> {
-      let lines =
-        list.reverse(complete_reversed)
-        |> list.map(string.replace(_, "\r", ""))
-      #(lines, remainder)
-    }
+fn extract_lines(
+  line_ends: splitter.Splitter,
+  remaining: String,
+  acc: List(String),
+) -> #(List(String), String) {
+  case splitter.split(line_ends, remaining) {
+    #(_, "", "") -> #(list.reverse(acc), remaining)
+    #(line, _, rest) -> extract_lines(line_ends, rest, [line, ..acc])
   }
 }
 
@@ -367,8 +369,10 @@ fn clean_pq_and_peek(
       case dict.get(state.jobs, job_id) {
         Ok(job) -> #(pq, Ok(#(pri, job_id, job)))
         Error(_) -> {
-          let assert Ok(#(_, rest)) = priority_queue.pop(pq)
-          clean_pq_and_peek(state, rest)
+          case priority_queue.pop(pq) {
+            Ok(#(_, rest)) -> clean_pq_and_peek(state, rest)
+            Error(_) -> #(pq, Error(Nil))
+          }
         }
       }
     }
@@ -533,22 +537,26 @@ fn try_match_waiters(
   job_id: Int,
 ) -> #(QueueState, Bool) {
   case find_matching_waiter(state.waiters, queue, []) {
-    None -> #(state, False)
-    Some(#(waiter, remaining_waiters)) -> {
-      let assert Ok(job) = dict.get(state.jobs, job_id)
-      let state =
-        QueueState(..state, waiters: remaining_waiters)
-        |> assign_job(job_id, job, waiter.client_id)
-      process.send(
-        waiter.reply,
-        GetOk(
-          id: job_id,
-          job: job.data,
-          priority: job.priority,
-          queue: job.queue,
-        ),
-      )
-      #(state, True)
+    option.None -> #(state, False)
+    option.Some(#(waiter, remaining_waiters)) -> {
+      case dict.get(state.jobs, job_id) {
+        Error(_) -> #(state, False)
+        Ok(job) -> {
+          let state =
+            QueueState(..state, waiters: remaining_waiters)
+            |> assign_job(job_id, job, waiter.client_id)
+          process.send(
+            waiter.reply,
+            GetOk(
+              id: job_id,
+              job: job.data,
+              priority: job.priority,
+              queue: job.queue,
+            ),
+          )
+          #(state, True)
+        }
+      }
     }
   }
 }
@@ -559,10 +567,10 @@ fn find_matching_waiter(
   checked: List(Waiter),
 ) -> Option(#(Waiter, List(Waiter))) {
   case waiters {
-    [] -> None
+    [] -> option.None
     [waiter, ..rest] -> {
       case list.contains(waiter.queues, queue) {
-        True -> Some(#(waiter, list.append(list.reverse(checked), rest)))
+        True -> option.Some(#(waiter, list.append(list.reverse(checked), rest)))
         False -> find_matching_waiter(rest, queue, [waiter, ..checked])
       }
     }
@@ -600,7 +608,7 @@ fn handle_connection(
     |> process.select(response_subject)
 
   let state = ConnectionState(buffer: "", client_id:, queue:, response_subject:)
-  #(state, Some(selector))
+  #(state, option.Some(selector))
 }
 
 fn handle_tcp_message(

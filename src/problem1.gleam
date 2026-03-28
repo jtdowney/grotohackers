@@ -10,7 +10,7 @@ import gleam/option
 import gleam/result
 import gleam/string
 import gleam_community/maths
-import glisten.{Packet}
+import glisten
 import logging
 
 pub type Number {
@@ -51,7 +51,7 @@ pub fn main() -> Nil {
         #(State(buffer: ""), option.None)
       },
       fn(state, msg, conn) {
-        let assert Packet(data) = msg
+        let assert glisten.Packet(data) = msg
         handle_message(state, data, conn)
       },
     )

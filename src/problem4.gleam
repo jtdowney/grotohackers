@@ -36,7 +36,13 @@ pub fn handle_request(
   }
 }
 
-fn handle_packet(store, conn, address, port, data) {
+fn handle_packet(
+  store: Dict(String, String),
+  conn: grammy.Connection,
+  address: #(Int, Int, Int, Int),
+  port: Int,
+  data: BitArray,
+) -> Dict(String, String) {
   case parse_request(data) {
     Error(_) -> store
     Ok(request) -> {

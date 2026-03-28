@@ -4,10 +4,11 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
 import gleam/list
-import gleam/option.{Some}
+import gleam/option
 import gleam/string
-import glisten.{Packet, User}
+import glisten
 import logging
+import splitter
 import mug
 
 const tony_address = "7YWHMfk9JZe0LM0g1ZauHuiSxhI"
@@ -34,17 +35,18 @@ pub fn process_buffer(
   buffer: String,
   new_data: String,
 ) -> #(List(String), String) {
-  let full_buffer = buffer <> new_data
-  let parts = string.split(full_buffer, "\n")
+  let line_ends = splitter.new(["\r\n", "\n"])
+  extract_lines(line_ends, buffer <> new_data, [])
+}
 
-  case list.reverse(parts) {
-    [] -> #([], "")
-    [remainder, ..complete_reversed] -> {
-      let lines =
-        list.reverse(complete_reversed)
-        |> list.map(string.replace(_, "\r", ""))
-      #(lines, remainder)
-    }
+fn extract_lines(
+  line_ends: splitter.Splitter,
+  remaining: String,
+  acc: List(String),
+) -> #(List(String), String) {
+  case splitter.split(line_ends, remaining) {
+    #(_, "", "") -> #(list.reverse(acc), remaining)
+    #(line, _, rest) -> extract_lines(line_ends, rest, [line, ..acc])
   }
 }
 
@@ -127,7 +129,7 @@ fn handle_connection(
     |> process.select(upstream_subject)
 
   let state = State(client_buffer: "", upstream_buffer: "", upstream_socket:)
-  #(state, Some(selector))
+  #(state, option.Some(selector))
 }
 
 fn handle_client_data(
@@ -136,9 +138,9 @@ fn handle_client_data(
   conn: glisten.Connection(ProxyMessage),
 ) -> glisten.Next(State, glisten.Message(ProxyMessage)) {
   case msg {
-    Packet(data) -> handle_client_packet(state, data)
-    User(UpstreamPacket(data)) -> handle_upstream_packet(state, data, conn)
-    User(UpstreamClosed) | User(UpstreamError(_)) -> glisten.stop()
+    glisten.Packet(data) -> handle_client_packet(state, data)
+    glisten.User(UpstreamPacket(data)) -> handle_upstream_packet(state, data, conn)
+    glisten.User(UpstreamClosed) | glisten.User(UpstreamError(_)) -> glisten.stop()
   }
 }
 

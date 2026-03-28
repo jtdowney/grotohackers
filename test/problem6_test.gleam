@@ -1,9 +1,6 @@
 import gleam/erlang/process
 import gleam/set
-import problem6.{
-  type ServerMessage, ErrorMsg, HeartbeatMsg, IAmCamera, IAmDispatcher,
-  NeedMoreData, Plate, Ticket, TicketMsg, UnknownMessage, WantHeartbeat,
-}
+import problem6
 
 pub fn parse_string_basic_test() {
   let data = <<4, "test":utf8>>
@@ -27,73 +24,73 @@ pub fn parse_string_empty_string_test() {
 }
 
 pub fn parse_string_need_more_data_test() {
-  assert problem6.parse_string(<<>>) == Error(NeedMoreData)
-  assert problem6.parse_string(<<5, "ab":utf8>>) == Error(NeedMoreData)
+  assert problem6.parse_string(<<>>) == Error(problem6.NeedMoreData)
+  assert problem6.parse_string(<<5, "ab":utf8>>) == Error(problem6.NeedMoreData)
 }
 
 pub fn parse_plate_message_test() {
   let data = <<0x20, 4, "UN1X":utf8, 0:size(32)-big>>
   let assert Ok(#(msg, rest)) = problem6.parse_message(data)
-  assert msg == Plate(plate: "UN1X", timestamp: 0)
+  assert msg == problem6.Plate(plate: "UN1X", timestamp: 0)
   assert rest == <<>>
 }
 
 pub fn parse_plate_with_timestamp_test() {
   let data = <<0x20, 4, "UN1X":utf8, 1000:size(32)-big>>
   let assert Ok(#(msg, _)) = problem6.parse_message(data)
-  assert msg == Plate(plate: "UN1X", timestamp: 1000)
+  assert msg == problem6.Plate(plate: "UN1X", timestamp: 1000)
 }
 
 pub fn parse_want_heartbeat_test() {
   let data = <<0x40, 0:size(32)-big>>
   let assert Ok(#(msg, rest)) = problem6.parse_message(data)
-  assert msg == WantHeartbeat(interval: 0)
+  assert msg == problem6.WantHeartbeat(interval: 0)
   assert rest == <<>>
 }
 
 pub fn parse_want_heartbeat_nonzero_test() {
   let data = <<0x40, 10:size(32)-big>>
   let assert Ok(#(msg, _)) = problem6.parse_message(data)
-  assert msg == WantHeartbeat(interval: 10)
+  assert msg == problem6.WantHeartbeat(interval: 10)
 }
 
 pub fn parse_i_am_camera_test() {
   let data = <<0x80, 66:size(16)-big, 8:size(16)-big, 60:size(16)-big>>
   let assert Ok(#(msg, rest)) = problem6.parse_message(data)
-  assert msg == IAmCamera(road: 66, mile: 8, limit: 60)
+  assert msg == problem6.IAmCamera(road: 66, mile: 8, limit: 60)
   assert rest == <<>>
 }
 
 pub fn parse_i_am_dispatcher_test() {
   let data = <<0x81, 3, 66:size(16)-big, 368:size(16)-big, 1:size(16)-big>>
   let assert Ok(#(msg, rest)) = problem6.parse_message(data)
-  assert msg == IAmDispatcher(roads: [66, 368, 1])
+  assert msg == problem6.IAmDispatcher(roads: [66, 368, 1])
   assert rest == <<>>
 }
 
 pub fn parse_i_am_dispatcher_zero_roads_test() {
   let data = <<0x81, 0>>
   let assert Ok(#(msg, rest)) = problem6.parse_message(data)
-  assert msg == IAmDispatcher(roads: [])
+  assert msg == problem6.IAmDispatcher(roads: [])
   assert rest == <<>>
 }
 
 pub fn parse_message_need_more_data_test() {
-  assert problem6.parse_message(<<>>) == Error(NeedMoreData)
-  assert problem6.parse_message(<<0x20>>) == Error(NeedMoreData)
-  assert problem6.parse_message(<<0x40, 0, 0>>) == Error(NeedMoreData)
-  assert problem6.parse_message(<<0x80, 0, 1>>) == Error(NeedMoreData)
+  assert problem6.parse_message(<<>>) == Error(problem6.NeedMoreData)
+  assert problem6.parse_message(<<0x20>>) == Error(problem6.NeedMoreData)
+  assert problem6.parse_message(<<0x40, 0, 0>>) == Error(problem6.NeedMoreData)
+  assert problem6.parse_message(<<0x80, 0, 1>>) == Error(problem6.NeedMoreData)
 }
 
 pub fn parse_message_unknown_type_test() {
-  assert problem6.parse_message(<<0x99, 0, 0>>) == Error(UnknownMessage(0x99))
-  assert problem6.parse_message(<<0x10, 0, 0>>) == Error(UnknownMessage(0x10))
+  assert problem6.parse_message(<<0x99, 0, 0>>) == Error(problem6.UnknownMessage(0x99))
+  assert problem6.parse_message(<<0x10, 0, 0>>) == Error(problem6.UnknownMessage(0x10))
 }
 
 pub fn process_buffer_single_message_test() {
   let data = <<0x40, 100:size(32)-big>>
   let assert Ok(#(messages, remainder)) = problem6.process_buffer(<<>>, data)
-  assert messages == [WantHeartbeat(interval: 100)]
+  assert messages == [problem6.WantHeartbeat(interval: 100)]
   assert remainder == <<>>
 }
 
@@ -111,7 +108,7 @@ pub fn process_buffer_multiple_messages_test() {
   >>
   let assert Ok(#(messages, remainder)) = problem6.process_buffer(<<>>, data)
   assert messages
-    == [IAmCamera(road: 66, mile: 8, limit: 60), WantHeartbeat(interval: 25)]
+    == [problem6.IAmCamera(road: 66, mile: 8, limit: 60), problem6.WantHeartbeat(interval: 25)]
   assert remainder == <<>>
 }
 
@@ -122,7 +119,7 @@ pub fn process_buffer_partial_continuation_test() {
 
   let rest = <<0, 42>>
   let assert Ok(#(msgs2, remainder)) = problem6.process_buffer(buffer, rest)
-  assert msgs2 == [WantHeartbeat(interval: 42)]
+  assert msgs2 == [problem6.WantHeartbeat(interval: 42)]
   assert remainder == <<>>
 }
 
@@ -132,22 +129,22 @@ pub fn process_buffer_unknown_type_error_test() {
 }
 
 pub fn encode_error_message_test() {
-  let encoded = problem6.encode_message(ErrorMsg("bad"))
+  let encoded = problem6.encode_message(problem6.ErrorMsg("bad"))
   assert encoded == <<0x10, 3, "bad":utf8>>
 }
 
 pub fn encode_error_message_empty_test() {
-  let encoded = problem6.encode_message(ErrorMsg(""))
+  let encoded = problem6.encode_message(problem6.ErrorMsg(""))
   assert encoded == <<0x10, 0>>
 }
 
 pub fn encode_heartbeat_test() {
-  assert problem6.encode_message(HeartbeatMsg) == <<0x41>>
+  assert problem6.encode_message(problem6.HeartbeatMsg) == <<0x41>>
 }
 
 pub fn encode_ticket_test() {
   let ticket =
-    Ticket(
+    problem6.Ticket(
       plate: "UN1X",
       road: 66,
       mile1: 100,
@@ -156,7 +153,7 @@ pub fn encode_ticket_test() {
       timestamp2: 123_816,
       speed: 10_000,
     )
-  let encoded = problem6.encode_message(TicketMsg(ticket))
+  let encoded = problem6.encode_message(problem6.TicketMsg(ticket))
   assert encoded
     == <<
       0x21, 4, "UN1X":utf8, 66:size(16)-big, 100:size(16)-big,
@@ -213,7 +210,7 @@ pub fn days_covered_same_timestamp_test() {
 
 pub fn actor_ticket_generation_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
 
   process.send(
     server,
@@ -242,7 +239,7 @@ pub fn actor_ticket_generation_test() {
     ),
   )
 
-  let assert Ok(TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "UN1X"
   assert ticket.road == 123
   assert ticket.speed == 8000
@@ -250,7 +247,7 @@ pub fn actor_ticket_generation_test() {
 
 pub fn actor_no_ticket_under_limit_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
 
   process.send(
     server,
@@ -285,7 +282,7 @@ pub fn actor_no_ticket_under_limit_test() {
 
 pub fn actor_day_deduplication_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
 
   process.send(
     server,
@@ -313,7 +310,7 @@ pub fn actor_day_deduplication_test() {
     ),
   )
 
-  let assert Ok(TicketMsg(_)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(_)) = process.receive(dispatcher_subject, 1000)
 
   process.send(
     server,
@@ -357,13 +354,13 @@ pub fn actor_pending_ticket_delivery_test() {
 
   process.sleep(50)
 
-  let dispatcher_subject: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
   process.send(
     server,
     problem6.RegisterDispatcher(roads: [42], subject: dispatcher_subject),
   )
 
-  let assert Ok(TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "WAIT"
   assert ticket.road == 42
   assert ticket.speed == 8000
@@ -371,7 +368,7 @@ pub fn actor_pending_ticket_delivery_test() {
 
 pub fn actor_dispatcher_disconnect_test() {
   let server = problem6.start_server()
-  let dispatcher1: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher1: process.Subject(problem6.ServerMessage) = process.new_subject()
 
   process.send(
     server,
@@ -404,19 +401,19 @@ pub fn actor_dispatcher_disconnect_test() {
   process.sleep(50)
   assert process.receive(dispatcher1, 100) == Error(Nil)
 
-  let dispatcher2: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher2: process.Subject(problem6.ServerMessage) = process.new_subject()
   process.send(
     server,
     problem6.RegisterDispatcher(roads: [7], subject: dispatcher2),
   )
 
-  let assert Ok(TicketMsg(ticket)) = process.receive(dispatcher2, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher2, 1000)
   assert ticket.plate == "DISC"
 }
 
 pub fn actor_multi_day_ticket_blocks_all_days_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
 
   process.send(
     server,
@@ -444,7 +441,7 @@ pub fn actor_multi_day_ticket_blocks_all_days_test() {
     ),
   )
 
-  let assert Ok(TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "MULTI"
 
   process.send(
@@ -465,22 +462,22 @@ pub fn actor_multi_day_ticket_blocks_all_days_test() {
 pub fn spec_camera_plate_example_test() {
   let camera_msg = <<0x80, 0x00, 0x42, 0x00, 0x08, 0x00, 0x3C>>
   let assert Ok(#(msg, <<>>)) = problem6.parse_message(camera_msg)
-  assert msg == IAmCamera(road: 66, mile: 8, limit: 60)
+  assert msg == problem6.IAmCamera(road: 66, mile: 8, limit: 60)
 
   let plate_msg = <<0x20, 0x04, 0x55, 0x4E, 0x31, 0x58, 0x00, 0x00, 0x03, 0xE8>>
   let assert Ok(#(msg2, <<>>)) = problem6.parse_message(plate_msg)
-  assert msg2 == Plate(plate: "UN1X", timestamp: 1000)
+  assert msg2 == problem6.Plate(plate: "UN1X", timestamp: 1000)
 }
 
 pub fn spec_dispatcher_example_test() {
   let data = <<0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88>>
   let assert Ok(#(msg, <<>>)) = problem6.parse_message(data)
-  assert msg == IAmDispatcher(roads: [66, 368, 5000])
+  assert msg == problem6.IAmDispatcher(roads: [66, 368, 5000])
 }
 
 pub fn spec_ticket_encoding_test() {
   let ticket =
-    Ticket(
+    problem6.Ticket(
       plate: "UN1X",
       road: 66,
       mile1: 8,
@@ -489,7 +486,7 @@ pub fn spec_ticket_encoding_test() {
       timestamp2: 45,
       speed: 8000,
     )
-  let encoded = problem6.encode_message(TicketMsg(ticket))
+  let encoded = problem6.encode_message(problem6.TicketMsg(ticket))
   assert encoded
     == <<
       0x21, 0x04, 0x55, 0x4E, 0x31, 0x58, 0x00, 0x42, 0x00, 0x08, 0x00, 0x00,
@@ -498,16 +495,16 @@ pub fn spec_ticket_encoding_test() {
 }
 
 pub fn spec_error_encoding_test() {
-  let encoded = problem6.encode_message(ErrorMsg("bad"))
+  let encoded = problem6.encode_message(problem6.ErrorMsg("bad"))
   assert encoded == <<0x10, 0x03, 0x62, 0x61, 0x64>>
 }
 
 pub fn spec_heartbeat_encoding_test() {
-  assert problem6.encode_message(HeartbeatMsg) == <<0x41>>
+  assert problem6.encode_message(problem6.HeartbeatMsg) == <<0x41>>
 }
 
 pub fn spec_want_heartbeat_parse_test() {
   let data = <<0x40, 0x00, 0x00, 0x00, 0x0A>>
   let assert Ok(#(msg, <<>>)) = problem6.parse_message(data)
-  assert msg == WantHeartbeat(interval: 10)
+  assert msg == problem6.WantHeartbeat(interval: 10)
 }

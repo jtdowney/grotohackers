@@ -2,7 +2,7 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
 import gleam/option
-import glisten.{Packet}
+import glisten
 import logging
 
 pub fn main() -> Nil {
@@ -25,7 +25,7 @@ pub fn main() -> Nil {
         #(Nil, option.None)
       },
       fn(state, msg, conn) {
-        let assert Packet(msg) = msg
+        let assert glisten.Packet(msg) = msg
         let assert Ok(_) = glisten.send(conn, bytes_tree.from_bit_array(msg))
 
         glisten.continue(state)

@@ -1,6 +1,6 @@
 import bitty
 import bitty/bytes
-import bitty/num.{BigEndian}
+import bitty/num
 import bitty/string as s
 import gleam/bit_array
 import gleam/bool
@@ -9,11 +9,11 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
-import glisten.{Packet, User}
+import glisten
 import logging
 
 pub type Plate =
@@ -75,8 +75,7 @@ pub type ConnectionState {
   ConnectionState(
     buffer: BitArray,
     role: ClientRole,
-    heartbeat_requested: Bool,
-    heartbeat_interval_ms: Int,
+    heartbeat_interval: Option(Int),
     server: Subject(ServerCommand),
     send_subject: Subject(ServerMessage),
   )
@@ -115,26 +114,26 @@ fn string_parser() -> bitty.Parser(String) {
 fn plate_parser() -> bitty.Parser(ClientMessage) {
   use _ <- bitty.then(bytes.tag(<<0x20>>))
   use plate <- bitty.then(string_parser())
-  use ts <- bitty.then(num.u32(BigEndian))
+  use ts <- bitty.then(num.u32(num.BigEndian))
   bitty.success(Plate(plate:, timestamp: ts))
 }
 
 fn want_heartbeat_parser() -> bitty.Parser(ClientMessage) {
-  bitty.preceded(bytes.tag(<<0x40>>), num.u32(BigEndian))
+  bitty.preceded(bytes.tag(<<0x40>>), num.u32(num.BigEndian))
   |> bitty.map(WantHeartbeat)
 }
 
 fn i_am_camera_parser() -> bitty.Parser(ClientMessage) {
   use _ <- bitty.then(bytes.tag(<<0x80>>))
-  use road <- bitty.then(num.u16(BigEndian))
-  use mile <- bitty.then(num.u16(BigEndian))
-  use limit <- bitty.then(num.u16(BigEndian))
+  use road <- bitty.then(num.u16(num.BigEndian))
+  use mile <- bitty.then(num.u16(num.BigEndian))
+  use limit <- bitty.then(num.u16(num.BigEndian))
   bitty.success(IAmCamera(road:, mile:, limit:))
 }
 
 fn i_am_dispatcher_parser() -> bitty.Parser(ClientMessage) {
   use _ <- bitty.then(bytes.tag(<<0x81>>))
-  use roads <- bitty.then(bitty.length_repeat(num.u8(), run: num.u16(BigEndian)))
+  use roads <- bitty.then(bitty.length_repeat(num.u8(), run: num.u16(num.BigEndian)))
   bitty.success(IAmDispatcher(roads:))
 }
 
@@ -149,9 +148,9 @@ fn client_message_parser() -> bitty.Parser(ClientMessage) {
 
 fn map_message_error(data: BitArray, err: bitty.BittyError) -> ParseError {
   case err.message, err.at.byte, data {
-    Some(msg), _, _ -> InvalidMessage(msg)
-    None, 0, <<tag:8, _:bytes>> -> UnknownMessage(tag)
-    None, _, _ -> NeedMoreData
+    option.Some(msg), _, _ -> InvalidMessage(msg)
+    option.None, 0, <<tag:8, _:bytes>> -> UnknownMessage(tag)
+    option.None, _, _ -> NeedMoreData
   }
 }
 
@@ -159,8 +158,8 @@ pub fn parse_string(data: BitArray) -> Result(#(String, BitArray), ParseError) {
   bitty.run_partial(string_parser(), on: data)
   |> result.map_error(fn(err) {
     case err.message {
-      Some(msg) -> InvalidMessage(msg)
-      None -> NeedMoreData
+      option.Some(msg) -> InvalidMessage(msg)
+      option.None -> NeedMoreData
     }
   })
 }
@@ -441,12 +440,11 @@ fn handle_connection(
     ConnectionState(
       buffer: <<>>,
       role: Unidentified,
-      heartbeat_requested: False,
-      heartbeat_interval_ms: 0,
+      heartbeat_interval: option.None,
       server:,
       send_subject:,
     )
-  #(state, Some(selector))
+  #(state, option.Some(selector))
 }
 
 fn handle_client_data(
@@ -455,22 +453,19 @@ fn handle_client_data(
   conn: glisten.Connection(ServerMessage),
 ) -> glisten.Next(ConnectionState, glisten.Message(ServerMessage)) {
   case msg {
-    Packet(data) -> handle_packet(state, data, conn)
-    User(HeartbeatMsg) -> {
+    glisten.Packet(data) -> handle_packet(state, data, conn)
+    glisten.User(HeartbeatMsg) -> {
       let _ = glisten.send(conn, bytes_tree.from_bit_array(<<0x41>>))
-      process.send_after(
-        state.send_subject,
-        state.heartbeat_interval_ms,
-        HeartbeatMsg,
-      )
+      let assert option.Some(interval_ms) = state.heartbeat_interval
+      process.send_after(state.send_subject, interval_ms, HeartbeatMsg)
       glisten.continue(state)
     }
-    User(TicketMsg(ticket)) -> {
+    glisten.User(TicketMsg(ticket)) -> {
       let encoded = encode_message(TicketMsg(ticket))
       let _ = glisten.send(conn, bytes_tree.from_bit_array(encoded))
       glisten.continue(state)
     }
-    User(ErrorMsg(_)) -> glisten.continue(state)
+    glisten.User(ErrorMsg(_)) -> glisten.continue(state)
   }
 }
 
@@ -529,12 +524,13 @@ fn handle_message(
           )
           Ok(state)
         }
-        _ -> Error("Plate message from non-camera client")
+        Unidentified -> Error("Plate message from non-camera client")
+        Dispatcher(_) -> Error("Plate message from non-camera client")
       }
     }
     WantHeartbeat(interval:) -> {
       use <- bool.guard(
-        when: state.heartbeat_requested,
+        when: option.is_some(state.heartbeat_interval),
         return: Error("Heartbeat already requested"),
       )
       let interval_ms = interval * 100
@@ -546,11 +542,7 @@ fn handle_message(
         False -> Nil
       }
       Ok(
-        ConnectionState(
-          ..state,
-          heartbeat_requested: True,
-          heartbeat_interval_ms: interval_ms,
-        ),
+        ConnectionState(..state, heartbeat_interval: option.Some(interval_ms)),
       )
     }
   }
@@ -580,7 +572,8 @@ fn handle_close(state: ConnectionState) -> Nil {
   case state.role {
     Dispatcher(_) ->
       process.send(state.server, UnregisterDispatcher(state.send_subject))
-    _ -> Nil
+    Unidentified -> Nil
+    Camera(_, _, _) -> Nil
   }
 }
 

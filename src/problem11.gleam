@@ -1,6 +1,6 @@
 import bitty
 import bitty/bytes
-import bitty/num.{BigEndian}
+import bitty/num
 import bitty/string as s
 import gleam/bit_array
 import gleam/bool
@@ -9,23 +9,27 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-import glisten.{Packet, User}
+import glisten
 import logging
 import mug
 
-pub type Message {
+pub type OutboundMessage {
   Hello(protocol: String, version: Int)
   MsgError(message: String)
   MsgOk
   DialAuthority(site: Int)
-  TargetPopulations(site: Int, populations: List(PopulationTarget))
   CreatePolicy(species: String, action: PolicyAction)
   DeletePolicy(policy: Int)
   PolicyResult(policy: Int)
+}
+
+pub type Message {
+  Outbound(OutboundMessage)
+  TargetPopulations(site: Int, populations: List(PopulationTarget))
   SiteVisit(site: Int, populations: List(PopulationObservation))
 }
 
@@ -71,7 +75,7 @@ fn sum_bytes(data: BitArray, acc: Int) -> Int {
 }
 
 fn str_parser() -> bitty.Parser(String) {
-  use len <- bitty.then(num.u32(BigEndian))
+  use len <- bitty.then(num.u32(num.BigEndian))
   s.utf8(len)
 }
 
@@ -84,44 +88,44 @@ const max_message_length = 1_000_000
 
 fn map_parse_error(err: bitty.BittyError) -> ParseError {
   case err.message {
-    Some(msg) -> InvalidMessage(msg)
-    None -> NeedMoreData
+    option.Some(msg) -> InvalidMessage(msg)
+    option.None -> NeedMoreData
   }
 }
 
 fn hello_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x50>>))
   use protocol <- bitty.then(str_parser())
-  use version <- bitty.then(num.u32(BigEndian))
-  bitty.success(Hello(protocol:, version:))
+  use version <- bitty.then(num.u32(num.BigEndian))
+  bitty.success(Outbound(Hello(protocol:, version:)))
 }
 
 fn error_parser() -> bitty.Parser(Message) {
   bitty.preceded(bytes.tag(<<0x51>>), str_parser())
-  |> bitty.map(MsgError)
+  |> bitty.map(fn(m) { Outbound(MsgError(m)) })
 }
 
 fn ok_parser() -> bitty.Parser(Message) {
-  bytes.tag(<<0x52>>) |> bitty.replace(MsgOk)
+  bytes.tag(<<0x52>>) |> bitty.replace(Outbound(MsgOk))
 }
 
 fn dial_authority_parser() -> bitty.Parser(Message) {
-  bitty.preceded(bytes.tag(<<0x53>>), num.u32(BigEndian))
-  |> bitty.map(DialAuthority)
+  bitty.preceded(bytes.tag(<<0x53>>), num.u32(num.BigEndian))
+  |> bitty.map(fn(s) { Outbound(DialAuthority(s)) })
 }
 
 fn population_target_parser() -> bitty.Parser(PopulationTarget) {
   use species <- bitty.then(str_parser())
-  use min <- bitty.then(num.u32(BigEndian))
-  use max <- bitty.then(num.u32(BigEndian))
+  use min <- bitty.then(num.u32(num.BigEndian))
+  use max <- bitty.then(num.u32(num.BigEndian))
   bitty.success(PopulationTarget(species:, min:, max:))
 }
 
 fn target_populations_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x54>>))
-  use site <- bitty.then(num.u32(BigEndian))
+  use site <- bitty.then(num.u32(num.BigEndian))
   use populations <- bitty.then(bitty.length_repeat(
-    num.u32(BigEndian),
+    num.u32(num.BigEndian),
     run: population_target_parser(),
   ))
   bitty.success(TargetPopulations(site:, populations:))
@@ -138,30 +142,30 @@ fn create_policy_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x55>>))
   use species <- bitty.then(str_parser())
   use action <- bitty.then(policy_action_parser())
-  bitty.success(CreatePolicy(species:, action:))
+  bitty.success(Outbound(CreatePolicy(species:, action:)))
 }
 
 fn delete_policy_parser() -> bitty.Parser(Message) {
-  bitty.preceded(bytes.tag(<<0x56>>), num.u32(BigEndian))
-  |> bitty.map(DeletePolicy)
+  bitty.preceded(bytes.tag(<<0x56>>), num.u32(num.BigEndian))
+  |> bitty.map(fn(p) { Outbound(DeletePolicy(p)) })
 }
 
 fn policy_result_parser() -> bitty.Parser(Message) {
-  bitty.preceded(bytes.tag(<<0x57>>), num.u32(BigEndian))
-  |> bitty.map(PolicyResult)
+  bitty.preceded(bytes.tag(<<0x57>>), num.u32(num.BigEndian))
+  |> bitty.map(fn(p) { Outbound(PolicyResult(p)) })
 }
 
 fn population_observation_parser() -> bitty.Parser(PopulationObservation) {
   use species <- bitty.then(str_parser())
-  use count <- bitty.then(num.u32(BigEndian))
+  use count <- bitty.then(num.u32(num.BigEndian))
   bitty.success(PopulationObservation(species:, count:))
 }
 
 fn site_visit_parser() -> bitty.Parser(Message) {
   use _ <- bitty.then(bytes.tag(<<0x58>>))
-  use site <- bitty.then(num.u32(BigEndian))
+  use site <- bitty.then(num.u32(num.BigEndian))
   use populations <- bitty.then(bitty.length_repeat(
-    num.u32(BigEndian),
+    num.u32(num.BigEndian),
     run: population_observation_parser(),
   ))
   bitty.success(SiteVisit(site:, populations:))
@@ -219,13 +223,13 @@ pub fn parse_message(data: BitArray) -> Result(#(Message, BitArray), ParseError)
     case err.at.byte, err.message, body {
       0, _, <<tag:8, _:bytes>> -> UnknownMessageType(tag)
       0, _, _ -> InvalidMessage("Truncated message content")
-      _, Some(msg), _ -> InvalidMessage(msg)
-      _, None, _ -> InvalidMessage("Truncated message content")
+      _, option.Some(msg), _ -> InvalidMessage(msg)
+      _, option.None, _ -> InvalidMessage("Truncated message content")
     }
   })
 }
 
-pub fn encode_message(msg: Message) -> BitArray {
+pub fn encode_message(msg: OutboundMessage) -> BitArray {
   let #(type_byte, content) = case msg {
     Hello(protocol:, version:) -> #(
       0x50,
@@ -234,15 +238,12 @@ pub fn encode_message(msg: Message) -> BitArray {
     MsgError(message:) -> #(0x51, encode_str(message))
     MsgOk -> #(0x52, <<>>)
     DialAuthority(site:) -> #(0x53, <<site:size(32)-big>>)
-    TargetPopulations(_, _) ->
-      panic as "TargetPopulations encoding not implemented"
     CreatePolicy(species:, action:) -> #(
       0x55,
       encode_create_policy_content(species, action),
     )
     DeletePolicy(policy:) -> #(0x56, <<policy:size(32)-big>>)
     PolicyResult(policy:) -> #(0x57, <<policy:size(32)-big>>)
-    SiteVisit(_, _) -> panic as "SiteVisit encoding not implemented"
   }
 
   let content_size = bit_array.byte_size(content)
@@ -322,26 +323,26 @@ pub fn compute_policy_changes(
     let #(min, max) = target
     let count = dict.get(observations, species) |> result.unwrap(0)
     let needed_action = case count < min, count > max {
-      True, _ -> Some(Conserve)
-      _, True -> Some(Cull)
-      _, _ -> None
+      True, _ -> option.Some(Conserve)
+      _, True -> option.Some(Cull)
+      _, _ -> option.None
     }
 
     let current = dict.get(current_policies, species)
 
     case needed_action, current {
-      None, Error(Nil) -> changes
-      None, Ok(#(policy_id, _)) -> [
+      option.None, Error(Nil) -> changes
+      option.None, Ok(#(policy_id, _)) -> [
         DeleteExistingPolicy(species:, policy_id:),
         ..changes
       ]
-      Some(action), Error(Nil) -> [
+      option.Some(action), Error(Nil) -> [
         CreateNewPolicy(species:, action:),
         ..changes
       ]
-      Some(action), Ok(#(_, current_action)) if action == current_action ->
+      option.Some(action), Ok(#(_, current_action)) if action == current_action ->
         changes
-      Some(action), Ok(#(policy_id, _)) -> [
+      option.Some(action), Ok(#(policy_id, _)) -> [
         CreateNewPolicy(species:, action:),
         DeleteExistingPolicy(species:, policy_id:),
         ..changes
@@ -372,7 +373,7 @@ fn connect_authority(
     receive_authority_message(socket, <<>>),
   )
   use _ <- result.try(case hello_msg {
-    Hello(protocol: "pestcontrol", version: 1) -> Ok(Nil)
+    Outbound(Hello(protocol: "pestcontrol", version: 1)) -> Ok(Nil)
     _ -> Error("Unexpected Hello response from authority")
   })
 
@@ -408,7 +409,7 @@ fn connect_authority(
 
 fn send_authority_message(
   socket: mug.Socket,
-  msg: Message,
+  msg: OutboundMessage,
 ) -> Result(Nil, String) {
   let encoded = encode_message(msg)
   mug.send(socket, encoded)
@@ -557,7 +558,7 @@ fn execute_policy_changes(
         state.authority_buffer,
       ))
       case response {
-        MsgOk -> {
+        Outbound(MsgOk) -> {
           let new_policies = dict.delete(state.policies, species)
           Ok(
             SiteActorState(
@@ -592,7 +593,7 @@ fn execute_policy_changes(
       state.authority_buffer,
     ))
     case response {
-      PolicyResult(policy:) -> {
+      Outbound(PolicyResult(policy:)) -> {
         let new_policies =
           dict.insert(state.policies, species, #(policy, action))
         Ok(
@@ -640,9 +641,9 @@ fn handle_site_manager_message(
     HandleSiteVisit(site:, populations:) -> {
       let #(new_state, site_subject) = get_or_create_site(state, site)
       case site_subject {
-        Some(subject) ->
+        option.Some(subject) ->
           process.send(subject, UpdateObservations(observations: populations))
-        None -> Nil
+        option.None -> Nil
       }
       actor.continue(new_state)
     }
@@ -654,12 +655,12 @@ fn get_or_create_site(
   site: Int,
 ) -> #(SiteManagerState, Option(Subject(SiteActorMessage))) {
   case dict.get(state.sites, site) {
-    Ok(subject) -> #(state, Some(subject))
+    Ok(subject) -> #(state, option.Some(subject))
     Error(Nil) -> {
       case start_site_actor(site) {
         Ok(subject) -> {
           let new_sites = dict.insert(state.sites, site, subject)
-          #(SiteManagerState(sites: new_sites), Some(subject))
+          #(SiteManagerState(sites: new_sites), option.Some(subject))
         }
         Error(reason) -> {
           logging.log(
@@ -669,18 +670,23 @@ fn get_or_create_site(
               <> ": "
               <> reason,
           )
-          #(state, None)
+          #(state, option.None)
         }
       }
     }
   }
 }
 
+pub type ClientPhase {
+  AwaitingHello
+  Active
+}
+
 pub type ClientState {
   ClientState(
     buffer: BitArray,
     site_manager: Subject(SiteManagerMessage),
-    hello_received: Bool,
+    phase: ClientPhase,
   )
 }
 
@@ -701,7 +707,7 @@ fn handle_connection(
   let hello = encode_message(Hello(protocol: "pestcontrol", version: 1))
   let _ = glisten.send(conn, bytes_tree.from_bit_array(hello))
 
-  #(ClientState(buffer: <<>>, site_manager:, hello_received: False), None)
+  #(ClientState(buffer: <<>>, site_manager:, phase: AwaitingHello), option.None)
 }
 
 fn handle_client_data(
@@ -710,8 +716,8 @@ fn handle_client_data(
   conn: glisten.Connection(Nil),
 ) -> glisten.Next(ClientState, glisten.Message(Nil)) {
   case msg {
-    Packet(data) -> handle_client_packet(state, data, conn)
-    User(_) -> glisten.continue(state)
+    glisten.Packet(data) -> handle_client_packet(state, data, conn)
+    glisten.User(_) -> glisten.continue(state)
   }
 }
 
@@ -749,15 +755,15 @@ fn handle_client_message(
   msg: Message,
   site_manager: Subject(SiteManagerMessage),
 ) -> Result(ClientState, String) {
-  case state.hello_received {
-    False ->
+  case state.phase {
+    AwaitingHello ->
       case msg {
-        Hello(protocol: "pestcontrol", version: 1) ->
-          Ok(ClientState(..state, hello_received: True))
-        Hello(_, _) -> Error("Invalid Hello: wrong protocol or version")
+        Outbound(Hello(protocol: "pestcontrol", version: 1)) ->
+          Ok(ClientState(..state, phase: Active))
+        Outbound(Hello(_, _)) -> Error("Invalid Hello: wrong protocol or version")
         _ -> Error("Expected Hello message")
       }
-    True ->
+    Active ->
       case msg {
         SiteVisit(site:, populations:) -> {
           use validated <- result.try(validate_populations(populations))

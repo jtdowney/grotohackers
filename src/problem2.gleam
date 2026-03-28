@@ -1,6 +1,6 @@
 import bitty
 import bitty/bytes
-import bitty/num.{BigEndian}
+import bitty/num
 import gleam/bit_array
 import gleam/bool
 import gleam/bytes_tree
@@ -9,7 +9,7 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option}
 import gleam/result
-import glisten.{Packet}
+import glisten
 import logging
 
 pub type Message {
@@ -54,7 +54,7 @@ fn handle_client_data(
   msg: glisten.Message(Message),
   conn: glisten.Connection(Message),
 ) -> glisten.Next(State, glisten.Message(Message)) {
-  let assert Packet(data) = msg
+  let assert glisten.Packet(data) = msg
   let State(buffer:, prices:) = state
 
   case process_buffer(buffer, data) {
@@ -72,7 +72,7 @@ fn handle_client_data(
 fn insert_parser() -> bitty.Parser(Message) {
   use #(ts, price) <- bitty.then(bitty.preceded(
     bytes.tag(<<73>>),
-    bitty.pair(num.i32(BigEndian), num.i32(BigEndian)),
+    bitty.pair(num.i32(num.BigEndian), num.i32(num.BigEndian)),
   ))
   bitty.success(Insert(timestamp: ts, price: price))
 }
@@ -80,7 +80,7 @@ fn insert_parser() -> bitty.Parser(Message) {
 fn query_parser() -> bitty.Parser(Message) {
   use #(min, max) <- bitty.then(bitty.preceded(
     bytes.tag(<<81>>),
-    bitty.pair(num.i32(BigEndian), num.i32(BigEndian)),
+    bitty.pair(num.i32(num.BigEndian), num.i32(num.BigEndian)),
   ))
   bitty.success(Query(mintime: min, maxtime: max))
 }

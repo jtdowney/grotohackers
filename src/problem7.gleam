@@ -7,7 +7,7 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/result
 import gleam/string
 import grammy
@@ -238,7 +238,7 @@ fn handle_connection() -> #(ServerState, Option(process.Selector(TimerMessage)))
     process.new_selector()
     |> process.select(subject)
   let state = ServerState(sessions: dict.new(), subject:)
-  #(state, Some(selector))
+  #(state, option.Some(selector))
 }
 
 fn handle_client_data(
@@ -299,7 +299,7 @@ fn handle_connect(
           send_buffer: "",
           total_sent: 0,
           highest_ack: 0,
-          retransmit_timer: None,
+          retransmit_timer: option.None,
           expiry_timer:,
         )
       let sessions = dict.insert(state.sessions, session_id, session)
@@ -512,16 +512,16 @@ fn start_retransmit(
       retransmit_timeout_ms,
       RetransmitTimeout(session_id),
     )
-  Session(..session, retransmit_timer: Some(timer))
+  Session(..session, retransmit_timer: option.Some(timer))
 }
 
 fn cancel_retransmit(session: Session) -> Session {
   case session.retransmit_timer {
-    Some(timer) -> {
+    option.Some(timer) -> {
       let _ = process.cancel_timer(timer)
-      Session(..session, retransmit_timer: None)
+      Session(..session, retransmit_timer: option.None)
     }
-    None -> session
+    option.None -> session
   }
 }
 

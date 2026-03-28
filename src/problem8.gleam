@@ -7,10 +7,10 @@ import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/int
 import gleam/list
-import gleam/option.{None}
+import gleam/option
 import gleam/result
 import gleam/string
-import glisten.{Packet}
+import glisten
 import logging
 
 pub type CipherOp {
@@ -199,7 +199,7 @@ fn handle_connection(
       <> int.to_string(port),
   )
 
-  #(NegotiatingCipher(spec_buffer: <<>>), None)
+  #(NegotiatingCipher(spec_buffer: <<>>), option.None)
 }
 
 fn handle_client_data(
@@ -208,14 +208,14 @@ fn handle_client_data(
   conn: glisten.Connection(Nil),
 ) -> glisten.Next(Phase, glisten.Message(Nil)) {
   case msg {
-    Packet(data) ->
+    glisten.Packet(data) ->
       case phase {
         NegotiatingCipher(spec_buffer:) ->
           handle_negotiation(spec_buffer, data, conn)
         Operating(client:, line_buffer:) ->
           handle_operating(client, line_buffer, data, conn)
       }
-    _ -> glisten.stop()
+    glisten.User(_) -> glisten.stop()
   }
 }
 

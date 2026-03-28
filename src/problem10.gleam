@@ -8,7 +8,7 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/result
 import gleam/set.{type Set}
@@ -171,11 +171,11 @@ fn get_parser() -> bitty.Parser(Command) {
         use _ <- bitty.then(sp())
         use r <- bitty.then(revision_token())
         use _ <- bitty.then(bitty.end())
-        bitty.success(Some(r))
+        bitty.success(option.Some(r))
       }),
       {
         use _ <- bitty.then(bitty.end())
-        bitty.success(None)
+        bitty.success(option.None)
       },
     ]),
   )
@@ -247,8 +247,8 @@ fn vcs_get(
   )
 
   let rev_num = case revision {
-    None -> list.length(revisions)
-    Some(r) -> r
+    option.None -> list.length(revisions)
+    option.Some(r) -> r
   }
 
   use <- bool.guard(when: rev_num < 1, return: Error("no such file"))
@@ -402,7 +402,7 @@ fn handle_connection(
   let _ = glisten.send(conn, bytes_tree.from_string("READY\n"))
 
   let state = ConnectionState(buffer: <<>>, mode: AwaitingCommand, vcs:)
-  #(state, None)
+  #(state, option.None)
 }
 
 fn handle_tcp_message(

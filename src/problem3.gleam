@@ -5,11 +5,12 @@ import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option}
 import gleam/otp/actor
 import gleam/string
-import glisten.{Packet, User}
+import glisten
 import logging
+import splitter
 
 pub type RoomMessage {
   Join(
@@ -21,10 +22,15 @@ pub type RoomMessage {
   Chat(sender: String, text: String)
 }
 
+pub type ConnectionPhase {
+  AwaitingName
+  InRoom(name: String)
+}
+
 pub type ConnectionState {
   ConnectionState(
     buffer: String,
-    name: Option(String),
+    phase: ConnectionPhase,
     room: Subject(RoomMessage),
     client_subject: Subject(String),
   )
@@ -48,17 +54,18 @@ pub fn process_buffer(
   buffer: String,
   new_data: String,
 ) -> #(List(String), String) {
-  let full_buffer = buffer <> new_data
-  let parts = string.split(full_buffer, "\n")
+  let line_ends = splitter.new(["\r\n", "\n"])
+  extract_lines(line_ends, buffer <> new_data, [])
+}
 
-  case list.reverse(parts) {
-    [] -> #([], "")
-    [remainder, ..complete_reversed] -> {
-      let lines =
-        list.reverse(complete_reversed)
-        |> list.map(string.replace(_, "\r", ""))
-      #(lines, remainder)
-    }
+fn extract_lines(
+  line_ends: splitter.Splitter,
+  remaining: String,
+  acc: List(String),
+) -> #(List(String), String) {
+  case splitter.split(line_ends, remaining) {
+    #(_, "", "") -> #(list.reverse(acc), remaining)
+    #(line, _, rest) -> extract_lines(line_ends, rest, [line, ..acc])
   }
 }
 
@@ -146,8 +153,9 @@ fn handle_connection(
       bytes_tree.from_string("Welcome to budgetchat! What shall I call you?\n"),
     )
 
-  let state = ConnectionState(buffer: "", name: None, room:, client_subject:)
-  #(state, Some(selector))
+  let state =
+    ConnectionState(buffer: "", phase: AwaitingName, room:, client_subject:)
+  #(state, option.Some(selector))
 }
 
 fn handle_client_data(
@@ -156,8 +164,8 @@ fn handle_client_data(
   conn: glisten.Connection(String),
 ) -> glisten.Next(ConnectionState, glisten.Message(String)) {
   case msg {
-    Packet(data) -> handle_packet(state, data, conn)
-    User(text) -> {
+    glisten.Packet(data) -> handle_packet(state, data, conn)
+    glisten.User(text) -> {
       let _ = glisten.send(conn, bytes_tree.from_string(text))
       glisten.continue(state)
     }
@@ -169,11 +177,11 @@ fn disconnect(
   message: Option(String),
 ) -> glisten.Next(ConnectionState, glisten.Message(String)) {
   case message {
-    Some(text) -> {
+    option.Some(text) -> {
       let _ = glisten.send(conn, bytes_tree.from_string(text))
       Nil
     }
-    None -> Nil
+    option.None -> Nil
   }
   glisten.stop()
 }
@@ -184,7 +192,7 @@ fn handle_packet(
   conn: glisten.Connection(String),
 ) -> glisten.Next(ConnectionState, glisten.Message(String)) {
   case bit_array.to_string(data) {
-    Error(_) -> disconnect(conn, None)
+    Error(_) -> disconnect(conn, option.None)
     Ok(text) -> {
       let #(lines, new_buffer) = process_buffer(state.buffer, text)
       process_lines(ConnectionState(..state, buffer: new_buffer), lines, conn)
@@ -197,10 +205,10 @@ fn process_lines(
   lines: List(String),
   conn: glisten.Connection(String),
 ) -> glisten.Next(ConnectionState, glisten.Message(String)) {
-  case lines, state.name {
+  case lines, state.phase {
     [], _ -> glisten.continue(state)
-    [line, ..rest], None -> handle_name_line(state, line, rest, conn)
-    [line, ..rest], Some(name) -> {
+    [line, ..rest], AwaitingName -> handle_name_line(state, line, rest, conn)
+    [line, ..rest], InRoom(name) -> {
       process.send(state.room, Chat(sender: name, text: line))
       process_lines(state, rest, conn)
     }
@@ -214,7 +222,7 @@ fn handle_name_line(
   conn: glisten.Connection(String),
 ) -> glisten.Next(ConnectionState, glisten.Message(String)) {
   use <- bool.lazy_guard(when: !is_valid_name(name), return: fn() {
-    disconnect(conn, Some("Invalid name. Disconnecting.\n"))
+    disconnect(conn, option.Some("Invalid name. Disconnecting.\n"))
   })
 
   let result =
@@ -222,20 +230,21 @@ fn handle_name_line(
       Join(name:, subject: state.client_subject, reply:)
     })
   case result {
-    Error(Nil) -> disconnect(conn, Some("Name already taken. Disconnecting.\n"))
+    Error(Nil) ->
+      disconnect(conn, option.Some("Name already taken. Disconnecting.\n"))
     Ok(members) -> {
       let _ =
         glisten.send(conn, bytes_tree.from_string(format_room_members(members)))
-      let new_state = ConnectionState(..state, name: Some(name))
+      let new_state = ConnectionState(..state, phase: InRoom(name))
       process_lines(new_state, remaining_lines, conn)
     }
   }
 }
 
 fn handle_close(state: ConnectionState) -> Nil {
-  case state.name {
-    None -> Nil
-    Some(name) -> process.send(state.room, Leave(name:))
+  case state.phase {
+    AwaitingName -> Nil
+    InRoom(name) -> process.send(state.room, Leave(name:))
   }
 }
 

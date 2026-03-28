@@ -695,7 +695,7 @@ fn handle_connection(
   conn: glisten.Connection(Nil),
 ) -> #(ClientState, Option(process.Selector(Nil))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
-    glisten.get_client_info(conn)
+    glisten.get_connection_info(conn)
   logging.log(
     logging.Debug,
     "New client from "

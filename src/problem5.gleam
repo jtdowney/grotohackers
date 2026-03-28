@@ -104,7 +104,7 @@ fn handle_connection(
   conn: glisten.Connection(ProxyMessage),
 ) -> #(State, option.Option(process.Selector(ProxyMessage))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
-    glisten.get_client_info(conn)
+    glisten.get_connection_info(conn)
   logging.log(
     logging.Debug,
     "New connection from "

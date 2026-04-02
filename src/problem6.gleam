@@ -133,7 +133,10 @@ fn i_am_camera_parser() -> bitty.Parser(ClientMessage) {
 
 fn i_am_dispatcher_parser() -> bitty.Parser(ClientMessage) {
   use _ <- bitty.then(bytes.tag(<<0x81>>))
-  use roads <- bitty.then(bitty.length_repeat(num.u8(), run: num.u16(num.BigEndian)))
+  use roads <- bitty.then(bitty.length_repeat(
+    num.u8(),
+    run: num.u16(num.BigEndian),
+  ))
   bitty.success(IAmDispatcher(roads:))
 }
 
@@ -541,9 +544,7 @@ fn handle_message(
         }
         False -> Nil
       }
-      Ok(
-        ConnectionState(..state, heartbeat_interval: option.Some(interval_ms)),
-      )
+      Ok(ConnectionState(..state, heartbeat_interval: option.Some(interval_ms)))
     }
   }
 }

@@ -31,7 +31,8 @@ pub fn request_decoder_int_test() {
     |> json.to_string()
 
   let request = problem1.request_decoder(request)
-  assert request == Ok(problem1.Request(method: "isPrime", number: problem1.IntNumber(123)))
+  assert request
+    == Ok(problem1.Request(method: "isPrime", number: problem1.IntNumber(123)))
 }
 
 pub fn request_decoder_float_test() {
@@ -43,7 +44,8 @@ pub fn request_decoder_float_test() {
     |> json.to_string()
 
   let request = problem1.request_decoder(request)
-  assert request == Ok(problem1.Request(method: "isPrime", number: problem1.FloatNumber(3.5)))
+  assert request
+    == Ok(problem1.Request(method: "isPrime", number: problem1.FloatNumber(3.5)))
 }
 
 pub fn request_decoder_invalid_json_test() {
@@ -134,14 +136,16 @@ pub fn process_buffer_complete_partial_test() {
 
 pub fn process_buffer_multiple_lines_test() {
   let input = is_prime_request(17) <> "\n" <> is_prime_request(4) <> "\n"
-  let assert problem1.Continue(responses:, buffer:) = problem1.process_buffer("", input)
+  let assert problem1.Continue(responses:, buffer:) =
+    problem1.process_buffer("", input)
   assert buffer == ""
   assert responses
     == [is_prime_response(True) <> "\n", is_prime_response(False) <> "\n"]
 }
 
 pub fn process_buffer_malformed_disconnects_test() {
-  let assert problem1.Disconnect(response:) = problem1.process_buffer("", "{invalid}\n")
+  let assert problem1.Disconnect(response:) =
+    problem1.process_buffer("", "{invalid}\n")
   assert response == "ERROR\n"
 }
 

@@ -8,8 +8,8 @@ import gleam/option
 import gleam/string
 import glisten
 import logging
-import splitter
 import mug
+import splitter
 
 const tony_address = "7YWHMfk9JZe0LM0g1ZauHuiSxhI"
 
@@ -139,8 +139,10 @@ fn handle_client_data(
 ) -> glisten.Next(State, glisten.Message(ProxyMessage)) {
   case msg {
     glisten.Packet(data) -> handle_client_packet(state, data)
-    glisten.User(UpstreamPacket(data)) -> handle_upstream_packet(state, data, conn)
-    glisten.User(UpstreamClosed) | glisten.User(UpstreamError(_)) -> glisten.stop()
+    glisten.User(UpstreamPacket(data)) ->
+      handle_upstream_packet(state, data, conn)
+    glisten.User(UpstreamClosed) | glisten.User(UpstreamError(_)) ->
+      glisten.stop()
   }
 }
 

@@ -83,8 +83,10 @@ pub fn parse_message_need_more_data_test() {
 }
 
 pub fn parse_message_unknown_type_test() {
-  assert problem6.parse_message(<<0x99, 0, 0>>) == Error(problem6.UnknownMessage(0x99))
-  assert problem6.parse_message(<<0x10, 0, 0>>) == Error(problem6.UnknownMessage(0x10))
+  assert problem6.parse_message(<<0x99, 0, 0>>)
+    == Error(problem6.UnknownMessage(0x99))
+  assert problem6.parse_message(<<0x10, 0, 0>>)
+    == Error(problem6.UnknownMessage(0x10))
 }
 
 pub fn process_buffer_single_message_test() {
@@ -108,7 +110,10 @@ pub fn process_buffer_multiple_messages_test() {
   >>
   let assert Ok(#(messages, remainder)) = problem6.process_buffer(<<>>, data)
   assert messages
-    == [problem6.IAmCamera(road: 66, mile: 8, limit: 60), problem6.WantHeartbeat(interval: 25)]
+    == [
+      problem6.IAmCamera(road: 66, mile: 8, limit: 60),
+      problem6.WantHeartbeat(interval: 25),
+    ]
   assert remainder == <<>>
 }
 
@@ -210,7 +215,8 @@ pub fn days_covered_same_timestamp_test() {
 
 pub fn actor_ticket_generation_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
 
   process.send(
     server,
@@ -239,7 +245,8 @@ pub fn actor_ticket_generation_test() {
     ),
   )
 
-  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) =
+    process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "UN1X"
   assert ticket.road == 123
   assert ticket.speed == 8000
@@ -247,7 +254,8 @@ pub fn actor_ticket_generation_test() {
 
 pub fn actor_no_ticket_under_limit_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
 
   process.send(
     server,
@@ -282,7 +290,8 @@ pub fn actor_no_ticket_under_limit_test() {
 
 pub fn actor_day_deduplication_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
 
   process.send(
     server,
@@ -310,7 +319,8 @@ pub fn actor_day_deduplication_test() {
     ),
   )
 
-  let assert Ok(problem6.TicketMsg(_)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(_)) =
+    process.receive(dispatcher_subject, 1000)
 
   process.send(
     server,
@@ -354,13 +364,15 @@ pub fn actor_pending_ticket_delivery_test() {
 
   process.sleep(50)
 
-  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
   process.send(
     server,
     problem6.RegisterDispatcher(roads: [42], subject: dispatcher_subject),
   )
 
-  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) =
+    process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "WAIT"
   assert ticket.road == 42
   assert ticket.speed == 8000
@@ -368,7 +380,8 @@ pub fn actor_pending_ticket_delivery_test() {
 
 pub fn actor_dispatcher_disconnect_test() {
   let server = problem6.start_server()
-  let dispatcher1: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher1: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
 
   process.send(
     server,
@@ -401,7 +414,8 @@ pub fn actor_dispatcher_disconnect_test() {
   process.sleep(50)
   assert process.receive(dispatcher1, 100) == Error(Nil)
 
-  let dispatcher2: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher2: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
   process.send(
     server,
     problem6.RegisterDispatcher(roads: [7], subject: dispatcher2),
@@ -413,7 +427,8 @@ pub fn actor_dispatcher_disconnect_test() {
 
 pub fn actor_multi_day_ticket_blocks_all_days_test() {
   let server = problem6.start_server()
-  let dispatcher_subject: process.Subject(problem6.ServerMessage) = process.new_subject()
+  let dispatcher_subject: process.Subject(problem6.ServerMessage) =
+    process.new_subject()
 
   process.send(
     server,
@@ -441,7 +456,8 @@ pub fn actor_multi_day_ticket_blocks_all_days_test() {
     ),
   )
 
-  let assert Ok(problem6.TicketMsg(ticket)) = process.receive(dispatcher_subject, 1000)
+  let assert Ok(problem6.TicketMsg(ticket)) =
+    process.receive(dispatcher_subject, 1000)
   assert ticket.plate == "MULTI"
 
   process.send(

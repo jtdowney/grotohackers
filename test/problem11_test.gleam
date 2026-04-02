@@ -55,9 +55,14 @@ pub fn parse_str_need_more_data_test() {
 }
 
 pub fn parse_hello_test() {
-  let msg = problem11.encode_message(problem11.Hello(protocol: "pestcontrol", version: 1))
+  let msg =
+    problem11.encode_message(problem11.Hello(
+      protocol: "pestcontrol",
+      version: 1,
+    ))
   let assert Ok(#(parsed, rest)) = problem11.parse_message(msg)
-  assert parsed == problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1))
+  assert parsed
+    == problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1))
   assert rest == <<>>
 }
 
@@ -90,17 +95,32 @@ pub fn parse_delete_policy_test() {
 }
 
 pub fn parse_create_policy_cull_test() {
-  let msg = problem11.encode_message(problem11.CreatePolicy(species: "dog", action: problem11.Cull))
+  let msg =
+    problem11.encode_message(problem11.CreatePolicy(
+      species: "dog",
+      action: problem11.Cull,
+    ))
   let assert Ok(#(parsed, rest)) = problem11.parse_message(msg)
-  assert parsed == problem11.Outbound(problem11.CreatePolicy(species: "dog", action: problem11.Cull))
+  assert parsed
+    == problem11.Outbound(problem11.CreatePolicy(
+      species: "dog",
+      action: problem11.Cull,
+    ))
   assert rest == <<>>
 }
 
 pub fn parse_create_policy_conserve_test() {
   let msg =
-    problem11.encode_message(problem11.CreatePolicy(species: "cat", action: problem11.Conserve))
+    problem11.encode_message(problem11.CreatePolicy(
+      species: "cat",
+      action: problem11.Conserve,
+    ))
   let assert Ok(#(parsed, rest)) = problem11.parse_message(msg)
-  assert parsed == problem11.Outbound(problem11.CreatePolicy(species: "cat", action: problem11.Conserve))
+  assert parsed
+    == problem11.Outbound(problem11.CreatePolicy(
+      species: "cat",
+      action: problem11.Conserve,
+    ))
   assert rest == <<>>
 }
 
@@ -116,7 +136,8 @@ pub fn parse_need_more_data_empty_test() {
 }
 
 pub fn parse_need_more_data_partial_header_test() {
-  assert problem11.parse_message(<<0x50, 0, 0>>) == Error(problem11.NeedMoreData)
+  assert problem11.parse_message(<<0x50, 0, 0>>)
+    == Error(problem11.NeedMoreData)
 }
 
 pub fn parse_need_more_data_incomplete_frame_test() {
@@ -133,7 +154,8 @@ pub fn parse_unknown_message_type_test() {
   let without_checksum = <<0xFF, 6:size(32)-big>>
   let checksum = problem11.compute_checksum(without_checksum)
   let frame = <<without_checksum:bits, checksum:8>>
-  assert problem11.parse_message(frame) == Error(problem11.UnknownMessageType(0xFF))
+  assert problem11.parse_message(frame)
+    == Error(problem11.UnknownMessageType(0xFF))
 }
 
 pub fn parse_length_too_short_test() {
@@ -160,7 +182,10 @@ pub fn spec_hello_example_test() {
     0x63, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c, 0x00, 0x00, 0x00, 0x01, 0xce,
   >>
   let encoded =
-    problem11.encode_message(problem11.Hello(protocol: "pestcontrol", version: 1))
+    problem11.encode_message(problem11.Hello(
+      protocol: "pestcontrol",
+      version: 1,
+    ))
   assert encoded == expected
 }
 
@@ -213,12 +238,19 @@ pub fn buffer_single_message_test() {
 
 pub fn buffer_multiple_messages_test() {
   let msg1 =
-    problem11.encode_message(problem11.Hello(protocol: "pestcontrol", version: 1))
+    problem11.encode_message(problem11.Hello(
+      protocol: "pestcontrol",
+      version: 1,
+    ))
   let msg2 = problem11.encode_message(problem11.MsgOk)
   let combined = <<msg1:bits, msg2:bits>>
   let assert Ok(#(messages, remainder)) =
     problem11.process_buffer(<<>>, combined)
-  assert messages == [problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1)), problem11.Outbound(problem11.MsgOk)]
+  assert messages
+    == [
+      problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1)),
+      problem11.Outbound(problem11.MsgOk),
+    ]
   assert remainder == <<>>
 }
 
@@ -236,7 +268,10 @@ pub fn buffer_partial_message_test() {
 
 pub fn buffer_split_across_packets_test() {
   let msg1 =
-    problem11.encode_message(problem11.Hello(protocol: "pestcontrol", version: 1))
+    problem11.encode_message(problem11.Hello(
+      protocol: "pestcontrol",
+      version: 1,
+    ))
   let msg2 = problem11.encode_message(problem11.MsgOk)
   let combined = <<msg1:bits, msg2:bits>>
 
@@ -244,7 +279,10 @@ pub fn buffer_split_across_packets_test() {
   let assert <<first_part:bytes-size(split_at), second_part:bytes>> = combined
   let assert Ok(#(messages1, buffer)) =
     problem11.process_buffer(<<>>, first_part)
-  assert messages1 == [problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1))]
+  assert messages1
+    == [
+      problem11.Outbound(problem11.Hello(protocol: "pestcontrol", version: 1)),
+    ]
 
   let assert Ok(#(messages2, remainder)) =
     problem11.process_buffer(buffer, second_part)
@@ -296,7 +334,8 @@ pub fn policy_changes_below_min_conserve_test() {
 
   let changes =
     problem11.compute_policy_changes(targets, observations, policies)
-  assert changes == [problem11.CreateNewPolicy(species: "dog", action: problem11.Conserve)]
+  assert changes
+    == [problem11.CreateNewPolicy(species: "dog", action: problem11.Conserve)]
 }
 
 pub fn policy_changes_above_max_cull_test() {
@@ -306,7 +345,8 @@ pub fn policy_changes_above_max_cull_test() {
 
   let changes =
     problem11.compute_policy_changes(targets, observations, policies)
-  assert changes == [problem11.CreateNewPolicy(species: "dog", action: problem11.Cull)]
+  assert changes
+    == [problem11.CreateNewPolicy(species: "dog", action: problem11.Cull)]
 }
 
 pub fn policy_changes_in_range_nothing_test() {
@@ -326,7 +366,8 @@ pub fn policy_changes_in_range_delete_existing_test() {
 
   let changes =
     problem11.compute_policy_changes(targets, observations, policies)
-  assert changes == [problem11.DeleteExistingPolicy(species: "dog", policy_id: 42)]
+  assert changes
+    == [problem11.DeleteExistingPolicy(species: "dog", policy_id: 42)]
 }
 
 pub fn policy_changes_same_action_no_change_test() {
@@ -346,7 +387,10 @@ pub fn policy_changes_different_action_test() {
 
   let changes =
     problem11.compute_policy_changes(targets, observations, policies)
-  assert list.contains(changes, problem11.CreateNewPolicy(species: "dog", action: problem11.Cull))
+  assert list.contains(
+    changes,
+    problem11.CreateNewPolicy(species: "dog", action: problem11.Cull),
+  )
   assert list.contains(
     changes,
     problem11.DeleteExistingPolicy(species: "dog", policy_id: 42),
@@ -360,7 +404,8 @@ pub fn policy_changes_missing_observation_is_zero_test() {
 
   let changes =
     problem11.compute_policy_changes(targets, observations, policies)
-  assert changes == [problem11.CreateNewPolicy(species: "dog", action: problem11.Conserve)]
+  assert changes
+    == [problem11.CreateNewPolicy(species: "dog", action: problem11.Conserve)]
 }
 
 pub fn policy_changes_species_not_in_targets_ignored_test() {
@@ -404,7 +449,10 @@ pub fn policy_changes_multiple_species_test() {
     changes,
     problem11.CreateNewPolicy(species: "dog", action: problem11.Conserve),
   )
-  assert list.contains(changes, problem11.CreateNewPolicy(species: "rat", action: problem11.Cull))
+  assert list.contains(
+    changes,
+    problem11.CreateNewPolicy(species: "rat", action: problem11.Cull),
+  )
 
   let cat_changes =
     list.filter(changes, fn(c) {

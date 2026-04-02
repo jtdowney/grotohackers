@@ -760,7 +760,8 @@ fn handle_client_message(
       case msg {
         Outbound(Hello(protocol: "pestcontrol", version: 1)) ->
           Ok(ClientState(..state, phase: Active))
-        Outbound(Hello(_, _)) -> Error("Invalid Hello: wrong protocol or version")
+        Outbound(Hello(_, _)) ->
+          Error("Invalid Hello: wrong protocol or version")
         _ -> Error("Expected Hello message")
       }
     Active ->

@@ -12,7 +12,6 @@ import gleam/option.{type Option}
 import gleam/order
 import gleam/otp/actor
 import gleam/result
-import gleam/string
 import gleamy/priority_queue.{type Queue as PQueue}
 import glisten
 import logging

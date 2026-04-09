@@ -1,13 +1,13 @@
 import gleam/bit_array
-import gleam/bytes_tree
 import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Selector}
+import gleam/erlang/process
+import gleam/function
 import gleam/int
-import gleam/option.{type Option}
 import gleam/result
 import gleam/string
-import grammy
+import glip
 import logging
+import toss
 
 pub type Request {
   Insert(key: String, value: String)
@@ -38,8 +38,8 @@ pub fn handle_request(
 
 fn handle_packet(
   store: Dict(String, String),
-  conn: grammy.Connection,
-  address: #(Int, Int, Int, Int),
+  socket: toss.Socket,
+  address: glip.IpAddress,
   port: Int,
   data: BitArray,
 ) -> Dict(String, String) {
@@ -49,36 +49,10 @@ fn handle_packet(
       let #(new_store, response) = handle_request(store, request)
       let _ =
         result.map(response, fn(text) {
-          grammy.send_to(conn, address, port, bytes_tree.from_string(text))
+          toss.send_to(socket, address, port, bit_array.from_string(text))
         })
       new_store
     }
-  }
-}
-
-fn handle_connection() -> #(Dict(String, String), Option(Selector(Nil))) {
-  let store = dict.from_list([#("version", "grotohackers 1.0")])
-  #(store, option.None)
-}
-
-fn handle_client_data(
-  msg: grammy.Message(Nil),
-  conn: grammy.Connection,
-  store: Dict(String, String),
-) -> grammy.Next(Dict(String, String), Nil) {
-  case msg {
-    grammy.Packet(address, port, data) -> {
-      logging.log(
-        logging.Debug,
-        "Packet from "
-          <> grammy.ip_address_to_string(address)
-          <> ":"
-          <> int.to_string(port),
-      )
-      handle_packet(store, conn, address, port, data)
-      |> grammy.continue
-    }
-    grammy.User(_) -> grammy.continue(store)
   }
 }
 
@@ -86,10 +60,44 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Debug)
 
-  let assert Ok(_) =
-    grammy.new(handle_connection, handle_client_data)
-    |> grammy.port(3050)
-    |> grammy.start
+  let assert Ok(socket) =
+    toss.new(port: 3050)
+    |> toss.use_ipv4()
+    |> toss.open()
 
-  process.sleep_forever()
+  let store = dict.from_list([#("version", "grotohackers 1.0")])
+  let selector =
+    process.new_selector()
+    |> toss.select_udp_messages(function.identity)
+
+  let assert Ok(_) = toss.receive_next_datagram_as_message(socket)
+  server_loop(socket, selector, store)
+}
+
+fn server_loop(
+  socket: toss.Socket,
+  selector: process.Selector(toss.UdpMessage),
+  store: Dict(String, String),
+) -> Nil {
+  let msg = process.selector_receive_forever(from: selector)
+  let assert Ok(_) = toss.receive_next_datagram_as_message(socket)
+  case msg {
+    toss.Datagram(_, host, port, data) -> {
+      let store = case host {
+        Ok(address) -> {
+          logging.log(
+            logging.Debug,
+            "Packet from "
+              <> glip.ip_to_string(address)
+              <> ":"
+              <> int.to_string(port),
+          )
+          handle_packet(store, socket, address, port, data)
+        }
+        Error(_) -> store
+      }
+      server_loop(socket, selector, store)
+    }
+    toss.UdpError(_, _) -> server_loop(socket, selector, store)
+  }
 }

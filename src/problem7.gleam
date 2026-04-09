@@ -2,7 +2,6 @@ import bitty
 import bitty/string as s
 import gleam/bit_array
 import gleam/bool
-import gleam/bytes_tree
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -10,8 +9,9 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
-import grammy
+import glip
 import logging
+import toss
 
 pub type LrcpMessage {
   Connect(session: Int)
@@ -27,7 +27,7 @@ type TimerMessage {
 
 type Session {
   Session(
-    address: #(Int, Int, Int, Int),
+    address: glip.IpAddress,
     port: Int,
     total_received: Int,
     line_buffer: String,
@@ -37,6 +37,11 @@ type Session {
     retransmit_timer: Option(process.Timer),
     expiry_timer: process.Timer,
   )
+}
+
+type ServerMessage {
+  Udp(toss.UdpMessage)
+  Timer(TimerMessage)
 }
 
 type ServerState {
@@ -224,65 +229,78 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Debug)
 
-  let assert Ok(_) =
-    grammy.new(handle_connection, handle_client_data)
-    |> grammy.port(3050)
-    |> grammy.start
+  let assert Ok(socket) =
+    toss.new(port: 3050)
+    |> toss.use_ipv4()
+    |> toss.open()
 
-  process.sleep_forever()
-}
-
-fn handle_connection() -> #(ServerState, Option(process.Selector(TimerMessage))) {
   let subject = process.new_subject()
   let selector =
     process.new_selector()
-    |> process.select(subject)
+    |> toss.select_udp_messages(Udp)
+    |> process.select_map(for: subject, mapping: Timer)
+
   let state = ServerState(sessions: dict.new(), subject:)
-  #(state, option.Some(selector))
+  let assert Ok(_) = toss.receive_next_datagram_as_message(socket)
+  server_loop(socket, selector, state)
 }
 
-fn handle_client_data(
-  msg: grammy.Message(TimerMessage),
-  conn: grammy.Connection,
+fn server_loop(
+  socket: toss.Socket,
+  selector: process.Selector(ServerMessage),
   state: ServerState,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> Nil {
+  let msg = process.selector_receive_forever(from: selector)
   case msg {
-    grammy.Packet(address, port, data) ->
-      handle_packet(state, conn, address, port, data)
-    grammy.User(timer_msg) -> handle_timer(state, conn, timer_msg)
+    Udp(toss.Datagram(_, host, port, data)) -> {
+      let assert Ok(_) = toss.receive_next_datagram_as_message(socket)
+      case host {
+        Ok(address) -> handle_packet(state, socket, address, port, data)
+        Error(_) -> state
+      }
+      |> server_loop(socket, selector, _)
+    }
+    Udp(toss.UdpError(_, _)) -> {
+      let assert Ok(_) = toss.receive_next_datagram_as_message(socket)
+      server_loop(socket, selector, state)
+    }
+    Timer(timer_msg) -> {
+      handle_timer(state, socket, timer_msg)
+      |> server_loop(socket, selector, _)
+    }
   }
 }
 
 fn handle_packet(
   state: ServerState,
-  conn: grammy.Connection,
-  address: #(Int, Int, Int, Int),
+  socket: toss.Socket,
+  address: glip.IpAddress,
   port: Int,
   data: BitArray,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   case parse_message(data) {
-    Error(_) -> grammy.continue(state)
+    Error(_) -> state
     Ok(Connect(session_id)) ->
-      handle_connect(state, conn, address, port, session_id)
+      handle_connect(state, socket, address, port, session_id)
     Ok(Data(session_id, pos, escaped_data)) ->
-      handle_data_msg(state, conn, session_id, pos, escaped_data)
+      handle_data_msg(state, socket, session_id, pos, escaped_data)
     Ok(Ack(session_id, length)) ->
-      handle_ack_msg(state, conn, session_id, length)
+      handle_ack_msg(state, socket, session_id, length)
     Ok(Close(session_id)) ->
-      handle_close_msg(state, conn, address, port, session_id)
+      handle_close_msg(state, socket, address, port, session_id)
   }
 }
 
 fn handle_connect(
   state: ServerState,
-  conn: grammy.Connection,
-  address: #(Int, Int, Int, Int),
+  socket: toss.Socket,
+  address: glip.IpAddress,
   port: Int,
   session_id: Int,
-) -> grammy.Next(ServerState, TimerMessage) {
-  send_response(conn, address, port, serialize_message(Ack(session_id, 0)))
+) -> ServerState {
+  send_response(socket, address, port, serialize_message(Ack(session_id, 0)))
   case dict.get(state.sessions, session_id) {
-    Ok(_) -> grammy.continue(state)
+    Ok(_) -> state
     Error(_) -> {
       let expiry_timer =
         process.send_after(
@@ -303,48 +321,48 @@ fn handle_connect(
           expiry_timer:,
         )
       let sessions = dict.insert(state.sessions, session_id, session)
-      grammy.continue(ServerState(..state, sessions:))
+      ServerState(..state, sessions:)
     }
   }
 }
 
 fn handle_data_msg(
   state: ServerState,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session_id: Int,
   pos: Int,
   escaped_data: String,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   case dict.get(state.sessions, session_id) {
-    Error(_) -> grammy.continue(state)
+    Error(_) -> state
     Ok(session) -> {
       use <- bool.lazy_guard(when: pos != session.total_received, return: fn() {
         send_response(
-          conn,
+          socket,
           session.address,
           session.port,
           serialize_message(Ack(session_id, session.total_received)),
         )
-        grammy.continue(state)
+        state
       })
 
-      accept_data(state, conn, session, session_id, escaped_data)
+      accept_data(state, socket, session, session_id, escaped_data)
     }
   }
 }
 
 fn accept_data(
   state: ServerState,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session: Session,
   session_id: Int,
   escaped_data: String,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   let unescaped = unescape(escaped_data)
   let new_total = session.total_received + string.length(unescaped)
 
   send_response(
-    conn,
+    socket,
     session.address,
     session.port,
     serialize_message(Ack(session_id, new_total)),
@@ -356,16 +374,16 @@ fn accept_data(
     Session(..session, total_received: new_total, line_buffer: new_line_buffer)
   let session = case string.is_empty(output) {
     True -> session
-    False -> send_output(session, conn, session_id, output, state.subject)
+    False -> send_output(session, socket, session_id, output, state.subject)
   }
   let session = refresh_expiry(session, state.subject, session_id)
   let sessions = dict.insert(state.sessions, session_id, session)
-  grammy.continue(ServerState(..state, sessions:))
+  ServerState(..state, sessions:)
 }
 
 fn send_output(
   session: Session,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session_id: Int,
   output: String,
   subject: Subject(TimerMessage),
@@ -373,9 +391,7 @@ fn send_output(
   let new_send_buffer = session.send_buffer <> output
   let new_total_sent = string.length(new_send_buffer)
   let chunks = chunk_for_send(session_id, session.total_sent, output)
-  list.each(chunks, fn(chunk) {
-    send_response(conn, session.address, session.port, chunk)
-  })
+  list.each(chunks, send_response(socket, session.address, session.port, _))
   let session =
     Session(..session, send_buffer: new_send_buffer, total_sent: new_total_sent)
   start_retransmit(session, subject, session_id)
@@ -383,93 +399,83 @@ fn send_output(
 
 fn handle_ack_msg(
   state: ServerState,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session_id: Int,
   length: Int,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   case dict.get(state.sessions, session_id) {
-    Error(_) -> grammy.continue(state)
+    Error(_) -> state
     Ok(session) -> {
-      use <- bool.guard(
-        when: length < session.highest_ack,
-        return: grammy.continue(state),
-      )
+      use <- bool.guard(when: length < session.highest_ack, return: state)
       use <- bool.lazy_guard(when: length > session.total_sent, return: fn() {
         send_response(
-          conn,
+          socket,
           session.address,
           session.port,
           serialize_message(Close(session_id)),
         )
-        grammy.continue(remove_session(state, session_id))
+        remove_session(state, session_id)
       })
 
       let session = Session(..session, highest_ack: length)
       let session = case length == session.total_sent {
         True -> cancel_retransmit(session)
-        False -> retransmit_from(session, conn, session_id, state.subject)
+        False -> retransmit_from(session, socket, session_id, state.subject)
       }
       let session = refresh_expiry(session, state.subject, session_id)
       let sessions = dict.insert(state.sessions, session_id, session)
-      grammy.continue(ServerState(..state, sessions:))
+      ServerState(..state, sessions:)
     }
   }
 }
 
 fn handle_close_msg(
   state: ServerState,
-  conn: grammy.Connection,
-  address: #(Int, Int, Int, Int),
+  socket: toss.Socket,
+  address: glip.IpAddress,
   port: Int,
   session_id: Int,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   let state = remove_session(state, session_id)
-  send_response(conn, address, port, serialize_message(Close(session_id)))
-  grammy.continue(state)
+  send_response(socket, address, port, serialize_message(Close(session_id)))
+  state
 }
 
 fn handle_timer(
   state: ServerState,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   msg: TimerMessage,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   case msg {
-    RetransmitTimeout(session_id) -> handle_retransmit(state, conn, session_id)
-    ExpiryTimeout(session_id) -> handle_expiry(state, session_id)
+    RetransmitTimeout(session_id) ->
+      handle_retransmit(state, socket, session_id)
+    ExpiryTimeout(session_id) -> remove_session(state, session_id)
   }
 }
 
 fn handle_retransmit(
   state: ServerState,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session_id: Int,
-) -> grammy.Next(ServerState, TimerMessage) {
+) -> ServerState {
   case dict.get(state.sessions, session_id) {
-    Error(_) -> grammy.continue(state)
+    Error(_) -> state
     Ok(session) -> {
       use <- bool.guard(
         when: session.highest_ack >= session.total_sent,
-        return: grammy.continue(state),
+        return: state,
       )
 
-      let session = retransmit_from(session, conn, session_id, state.subject)
+      let session = retransmit_from(session, socket, session_id, state.subject)
       let sessions = dict.insert(state.sessions, session_id, session)
-      grammy.continue(ServerState(..state, sessions:))
+      ServerState(..state, sessions:)
     }
   }
 }
 
-fn handle_expiry(
-  state: ServerState,
-  session_id: Int,
-) -> grammy.Next(ServerState, TimerMessage) {
-  let state = remove_session(state, session_id)
-  grammy.continue(state)
-}
-
 fn retransmit_from(
   session: Session,
-  conn: grammy.Connection,
+  socket: toss.Socket,
   session_id: Int,
   subject: Subject(TimerMessage),
 ) -> Session {
@@ -482,9 +488,7 @@ fn retransmit_from(
     )
   let chunks = chunk_for_send(session_id, session.highest_ack, unsent_data)
 
-  list.each(chunks, fn(chunk) {
-    send_response(conn, session.address, session.port, chunk)
-  })
+  list.each(chunks, send_response(socket, session.address, session.port, _))
 
   start_retransmit(session, subject, session_id)
 }
@@ -537,11 +541,11 @@ fn remove_session(state: ServerState, session_id: Int) -> ServerState {
 }
 
 fn send_response(
-  conn: grammy.Connection,
-  address: #(Int, Int, Int, Int),
+  socket: toss.Socket,
+  address: glip.IpAddress,
   port: Int,
   message: String,
 ) -> Nil {
-  let _ = grammy.send_to(conn, address, port, bytes_tree.from_string(message))
+  let _ = toss.send_to(socket, address, port, bit_array.from_string(message))
   Nil
 }

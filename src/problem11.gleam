@@ -185,7 +185,9 @@ fn message_content_parser() -> bitty.Parser(Message) {
   ])
 }
 
-pub fn parse_message(data: BitArray) -> Result(#(Message, BitArray), ParseError) {
+pub fn parse_message(
+  data: BitArray,
+) -> Result(#(Message, BitArray), ParseError) {
   use <- bool.guard(
     when: bit_array.byte_size(data) < 5,
     return: Error(NeedMoreData),
@@ -340,8 +342,9 @@ pub fn compute_policy_changes(
         CreateNewPolicy(species:, action:),
         ..changes
       ]
-      option.Some(action), Ok(#(_, current_action)) if action == current_action ->
-        changes
+      option.Some(action), Ok(#(_, current_action))
+        if action == current_action
+      -> changes
       option.Some(action), Ok(#(policy_id, _)) -> [
         CreateNewPolicy(species:, action:),
         DeleteExistingPolicy(species:, policy_id:),

@@ -90,7 +90,9 @@ fn number_decoder() -> decode.Decoder(Number) {
   ])
 }
 
-pub fn request_decoder(json_string: String) -> Result(Request, json.DecodeError) {
+pub fn request_decoder(
+  json_string: String,
+) -> Result(Request, json.DecodeError) {
   let decoder = {
     use method <- decode.field("method", decode.string)
     use number <- decode.field("number", number_decoder())

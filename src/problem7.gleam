@@ -171,7 +171,10 @@ pub fn unescape(text: String) -> String {
   |> string.replace("\\\\", "\\")
 }
 
-pub fn process_lines(line_buffer: String, new_data: String) -> #(String, String) {
+pub fn process_lines(
+  line_buffer: String,
+  new_data: String,
+) -> #(String, String) {
   let combined = line_buffer <> new_data
   case string.split_once(combined, "\n") {
     Error(_) -> #("", combined)

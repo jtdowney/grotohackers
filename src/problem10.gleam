@@ -547,7 +547,7 @@ fn process_data_buffer(
       glisten.continue(state)
     }
     True -> {
-      let assert Ok(data_part) = take_bytes(state.buffer, remaining)
+      let assert Ok(data_part) = bit_array.slice(state.buffer, 0, remaining)
       let assert Ok(rest) = drop_bytes(state.buffer, remaining)
       let full_data = bit_array.append(accumulated, data_part)
 
@@ -582,16 +582,12 @@ fn find_newline_at(
 
   case bit_array.slice(data, offset, 1) {
     Ok(<<0x0A>>) -> {
-      let assert Ok(line) = take_bytes(data, offset)
+      let assert Ok(line) = bit_array.slice(data, 0, offset)
       let assert Ok(rest) = drop_bytes(data, offset + 1)
       Ok(#(line, rest))
     }
     _ -> find_newline_at(data, offset + 1)
   }
-}
-
-fn take_bytes(data: BitArray, count: Int) -> Result(BitArray, Nil) {
-  bit_array.slice(data, 0, count)
 }
 
 fn drop_bytes(data: BitArray, count: Int) -> Result(BitArray, Nil) {

@@ -22,10 +22,6 @@ pub type Request {
   Request(method: String, number: Number)
 }
 
-pub type State {
-  State(buffer: String)
-}
-
 pub type LineResult {
   Continue(responses: List(String), buffer: String)
   Disconnect(response: String)
@@ -48,7 +44,7 @@ pub fn main() -> Nil {
             <> int.to_string(port),
         )
 
-        #(State(buffer: ""), option.None)
+        #("", option.None)
       },
       fn(state, msg, conn) {
         let assert glisten.Packet(data) = msg
@@ -61,9 +57,7 @@ pub fn main() -> Nil {
   process.sleep_forever()
 }
 
-fn handle_message(state: State, data: BitArray, conn) {
-  let State(buffer:) = state
-
+fn handle_message(buffer: String, data: BitArray, conn) {
   case bit_array.to_string(data) {
     Error(_) -> send_and_disconnect(conn, "ERROR\n")
     Ok(text) ->
@@ -73,7 +67,7 @@ fn handle_message(state: State, data: BitArray, conn) {
           list.each(responses, fn(response) {
             let _ = glisten.send(conn, bytes_tree.from_string(response))
           })
-          glisten.continue(State(buffer: new_buffer))
+          glisten.continue(new_buffer)
         }
       }
   }

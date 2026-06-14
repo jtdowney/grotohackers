@@ -196,9 +196,7 @@ pub fn process_buffer_continuation_test() {
 
 pub fn put_and_get_basic_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let put_response =
     process.call(queue, 1000, fn(reply) {
@@ -222,9 +220,7 @@ pub fn put_and_get_basic_test() {
 
 pub fn priority_ordering_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: low_id) =
     process.call(queue, 1000, fn(reply) {
@@ -261,9 +257,7 @@ pub fn priority_ordering_test() {
 
 pub fn multi_queue_get_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -284,9 +278,7 @@ pub fn multi_queue_get_test() {
 
 pub fn get_no_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.NoJob =
     process.call(queue, 1000, fn(reply) {
@@ -296,9 +288,7 @@ pub fn get_no_job_test() {
 
 pub fn delete_removes_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -330,9 +320,7 @@ pub fn delete_nonexistent_job_test() {
 
 pub fn abort_requeues_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -363,10 +351,8 @@ pub fn abort_requeues_job_test() {
 
 pub fn abort_wrong_client_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client1 = problem9.next_id(counter)
-  let client2 = problem9.next_id(counter)
+  let client1 = 1
+  let client2 = 2
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -391,9 +377,7 @@ pub fn abort_wrong_client_test() {
 
 pub fn abort_deleted_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -418,9 +402,7 @@ pub fn abort_deleted_job_test() {
 
 pub fn wait_then_put_satisfies_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let wait_reply = process.new_subject()
   process.send(
@@ -447,10 +429,8 @@ pub fn wait_then_put_satisfies_test() {
 
 pub fn disconnect_aborts_working_jobs_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
-  let client2 = problem9.next_id(counter)
+  let client_id = 1
+  let client2 = 2
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -479,9 +459,7 @@ pub fn disconnect_aborts_working_jobs_test() {
 
 pub fn disconnect_removes_waiters_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let wait_reply = process.new_subject()
   process.send(
@@ -507,9 +485,7 @@ pub fn disconnect_removes_waiters_test() {
 
 pub fn delete_working_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {
@@ -539,9 +515,7 @@ pub fn delete_working_job_test() {
 
 pub fn abort_not_working_job_test() {
   let queue = problem9.start_queue()
-  let counter = problem9.new_counter()
-
-  let client_id = problem9.next_id(counter)
+  let client_id = 1
 
   let assert problem9.PutOk(id: job_id) =
     process.call(queue, 1000, fn(reply) {

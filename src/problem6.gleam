@@ -16,29 +16,11 @@ import gleam/set.{type Set}
 import glisten
 import logging
 
-pub type Plate =
-  String
-
-pub type Road =
-  Int
-
-pub type Mile =
-  Int
-
-pub type Timestamp =
-  Int
-
-pub type Speed =
-  Int
-
-pub type Day =
-  Int
-
 pub type ClientMessage {
-  Plate(plate: Plate, timestamp: Timestamp)
+  Plate(plate: String, timestamp: Int)
   WantHeartbeat(interval: Int)
-  IAmCamera(road: Road, mile: Mile, limit: Speed)
-  IAmDispatcher(roads: List(Road))
+  IAmCamera(road: Int, mile: Int, limit: Int)
+  IAmDispatcher(roads: List(Int))
 }
 
 pub type ServerMessage {
@@ -49,20 +31,20 @@ pub type ServerMessage {
 
 pub type Ticket {
   Ticket(
-    plate: Plate,
-    road: Road,
-    mile1: Mile,
-    timestamp1: Timestamp,
-    mile2: Mile,
-    timestamp2: Timestamp,
-    speed: Speed,
+    plate: String,
+    road: Int,
+    mile1: Int,
+    timestamp1: Int,
+    mile2: Int,
+    timestamp2: Int,
+    speed: Int,
   )
 }
 
 pub type ClientRole {
   Unidentified
-  Camera(road: Road, mile: Mile, limit: Speed)
-  Dispatcher(roads: List(Road))
+  Camera(road: Int, mile: Int, limit: Int)
+  Dispatcher(roads: List(Int))
 }
 
 pub type ParseError {
@@ -82,27 +64,27 @@ pub type ConnectionState {
 }
 
 pub type Observation {
-  Observation(mile: Mile, timestamp: Timestamp, limit: Speed)
+  Observation(mile: Int, timestamp: Int, limit: Int)
 }
 
 pub type ServerCommand {
   RecordObservation(
-    plate: Plate,
-    road: Road,
-    mile: Mile,
-    timestamp: Timestamp,
-    limit: Speed,
+    plate: String,
+    road: Int,
+    mile: Int,
+    timestamp: Int,
+    limit: Int,
   )
-  RegisterDispatcher(roads: List(Road), subject: Subject(ServerMessage))
+  RegisterDispatcher(roads: List(Int), subject: Subject(ServerMessage))
   UnregisterDispatcher(subject: Subject(ServerMessage))
 }
 
 pub type ServerState {
   ServerState(
-    observations: Dict(#(Plate, Road), List(Observation)),
-    ticketed_days: Dict(Plate, Set(Day)),
-    dispatchers: Dict(Road, List(Subject(ServerMessage))),
-    pending_tickets: Dict(Road, List(Ticket)),
+    observations: Dict(#(String, Int), List(Observation)),
+    ticketed_days: Dict(String, Set(Int)),
+    dispatchers: Dict(Int, List(Subject(ServerMessage))),
+    pending_tickets: Dict(Int, List(Ticket)),
   )
 }
 
@@ -222,11 +204,11 @@ pub fn encode_message(msg: ServerMessage) -> BitArray {
 }
 
 pub fn calculate_speed(
-  mile1: Mile,
-  timestamp1: Timestamp,
-  mile2: Mile,
-  timestamp2: Timestamp,
-) -> Speed {
+  mile1: Int,
+  timestamp1: Int,
+  mile2: Int,
+  timestamp2: Int,
+) -> Int {
   let distance = int.absolute_value(mile2 - mile1)
   case int.absolute_value(timestamp2 - timestamp1) {
     0 -> 0
@@ -234,7 +216,7 @@ pub fn calculate_speed(
   }
 }
 
-pub fn days_covered(timestamp1: Timestamp, timestamp2: Timestamp) -> Set(Day) {
+pub fn days_covered(timestamp1: Int, timestamp2: Int) -> Set(Int) {
   let low = int.min(timestamp1, timestamp2) / 86_400
   let high = int.max(timestamp1, timestamp2) / 86_400
   int.range(from: low, to: high + 1, with: set.new(), run: set.insert)
@@ -273,11 +255,11 @@ fn handle_server_message(
 
 fn handle_record_observation(
   state: ServerState,
-  plate: Plate,
-  road: Road,
-  mile: Mile,
-  timestamp: Timestamp,
-  limit: Speed,
+  plate: String,
+  road: Int,
+  mile: Int,
+  timestamp: Int,
+  limit: Int,
 ) -> actor.Next(ServerState, ServerCommand) {
   let key = #(plate, road)
   let obs = Observation(mile:, timestamp:, limit:)
@@ -303,8 +285,8 @@ fn handle_record_observation(
 }
 
 fn generate_tickets(
-  plate: Plate,
-  road: Road,
+  plate: String,
+  road: Int,
   new_obs: Observation,
   existing: List(Observation),
 ) -> List(Ticket) {
@@ -336,11 +318,11 @@ fn generate_tickets(
 }
 
 fn process_ticket(
-  acc: #(Dict(Plate, Set(Day)), Dict(Road, List(Ticket))),
-  plate: Plate,
-  dispatchers: Dict(Road, List(Subject(ServerMessage))),
+  acc: #(Dict(String, Set(Int)), Dict(Int, List(Ticket))),
+  plate: String,
+  dispatchers: Dict(Int, List(Subject(ServerMessage))),
   ticket: Ticket,
-) -> #(Dict(Plate, Set(Day)), Dict(Road, List(Ticket))) {
+) -> #(Dict(String, Set(Int)), Dict(Int, List(Ticket))) {
   let #(ticketed_days, pending) = acc
   let covered = days_covered(ticket.timestamp1, ticket.timestamp2)
   let already_ticketed_days =
@@ -358,10 +340,10 @@ fn process_ticket(
 }
 
 fn try_dispatch_ticket(
-  pending: Dict(Road, List(Ticket)),
-  dispatchers: Dict(Road, List(Subject(ServerMessage))),
+  pending: Dict(Int, List(Ticket)),
+  dispatchers: Dict(Int, List(Subject(ServerMessage))),
   ticket: Ticket,
-) -> Dict(Road, List(Ticket)) {
+) -> Dict(Int, List(Ticket)) {
   case dict.get(dispatchers, ticket.road) {
     Ok([dispatcher, ..]) -> {
       process.send(dispatcher, TicketMsg(ticket))
@@ -376,7 +358,7 @@ fn try_dispatch_ticket(
 
 fn handle_register_dispatcher(
   state: ServerState,
-  roads: List(Road),
+  roads: List(Int),
   subject: Subject(ServerMessage),
 ) -> actor.Next(ServerState, ServerCommand) {
   let new_dispatchers =

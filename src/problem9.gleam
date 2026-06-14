@@ -17,22 +17,6 @@ import glisten
 import logging
 import splitter
 
-pub type Counter
-
-@external(erlang, "atomics", "new")
-fn atomics_new(size: Int, opts: List(a)) -> Counter
-
-@external(erlang, "atomics", "add_get")
-fn atomics_add_get(counter: Counter, index: Int, incr: Int) -> Int
-
-pub fn new_counter() -> Counter {
-  atomics_new(1, [])
-}
-
-pub fn next_id(counter: Counter) -> Int {
-  atomics_add_get(counter, 1, 1)
-}
-
 pub type Job {
   Job(queue: String, data: Dynamic, priority: Int)
 }
@@ -194,6 +178,7 @@ pub type QueueMessage {
   AbortJob(client_id: Int, id: Int, reply: Subject(Response))
   ClientDisconnect(client_id: Int)
   EchoReply(response: Response, reply: Subject(Response))
+  RegisterClient(reply: Subject(Int))
 }
 
 fn new_queue_state() -> QueueState {
@@ -233,6 +218,12 @@ fn handle_queue_message(
     EchoReply(response:, reply:) -> {
       process.send(reply, response)
       actor.continue(state)
+    }
+    RegisterClient(reply:) -> {
+      process.send(reply, state.next_client_id)
+      actor.continue(
+        QueueState(..state, next_client_id: state.next_client_id + 1),
+      )
     }
   }
 }
@@ -587,7 +578,6 @@ pub type ConnectionState {
 
 fn handle_connection(
   queue: Subject(QueueMessage),
-  client_counter: Counter,
   conn: glisten.Connection(Response),
 ) -> #(ConnectionState, Option(process.Selector(Response))) {
   let assert Ok(glisten.ConnectionInfo(ip_address:, port:)) =
@@ -600,7 +590,7 @@ fn handle_connection(
       <> int.to_string(port),
   )
 
-  let client_id = next_id(client_counter)
+  let client_id = process.call(queue, 5000, RegisterClient)
   let response_subject = process.new_subject()
   let selector =
     process.new_selector()
@@ -690,9 +680,8 @@ pub fn main() -> Nil {
   logging.set_level(logging.Debug)
 
   let queue = start_queue()
-  let client_counter = new_counter()
   let assert Ok(_) =
-    glisten.new(handle_connection(queue, client_counter, _), handle_tcp_message)
+    glisten.new(handle_connection(queue, _), handle_tcp_message)
     |> glisten.with_close(handle_close)
     |> glisten.with_pool_size(200)
     |> glisten.bind("::")

@@ -124,21 +124,20 @@ pub fn compute_mean(
 ) -> Int {
   use <- bool.guard(when: mintime > maxtime, return: 0)
 
-  let matching =
-    list.filter(prices, fn(entry) {
-      let #(ts, _) = entry
-      ts >= mintime && ts <= maxtime
+  let #(sum, count) =
+    list.fold(prices, #(0, 0), fn(acc, entry) {
+      let #(ts, price) = entry
+      let #(sum, count) = acc
+      case ts >= mintime && ts <= maxtime {
+        True -> #(sum + price, count + 1)
+        False -> acc
+      }
     })
 
-  let count = list.length(matching)
-  use <- bool.guard(when: count == 0, return: 0)
-
-  let sum =
-    list.fold(matching, 0, fn(acc, entry) {
-      let #(_, price) = entry
-      acc + price
-    })
-  sum / count
+  case count {
+    0 -> 0
+    _ -> sum / count
+  }
 }
 
 pub fn process_messages(

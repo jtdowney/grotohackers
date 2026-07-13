@@ -54,18 +54,41 @@ pub type ConnectionState {
   )
 }
 
-const illegal_chars = "`~!@#$%^&*()+={}[]:;'\",?\\|"
-
 pub fn is_valid_filename(name: String) -> Bool {
   use <- bool.guard(when: !string.starts_with(name, "/"), return: False)
 
-  let illegal_set =
-    illegal_chars
-    |> string.to_graphemes
-
   name
-  |> string.to_graphemes
-  |> list.all(fn(c) { !list.contains(illegal_set, c) && !is_whitespace(c) })
+  |> string.to_utf_codepoints
+  |> list.all(fn(codepoint) {
+    codepoint
+    |> string.utf_codepoint_to_int
+    |> is_valid_filename_codepoint
+  })
+}
+
+fn is_valid_filename_codepoint(codepoint: Int) -> Bool {
+  let is_whitespace =
+    codepoint == 0x09
+    || codepoint == 0x0A
+    || codepoint == 0x0D
+    || codepoint == 0x20
+
+  let is_illegal = case codepoint {
+    // ! through ,
+    n if n >= 0x21 && n <= 0x2C -> True
+
+    // : ; = ? @
+    0x3A | 0x3B | 0x3D | 0x3F | 0x40 -> True
+
+    // [ \ ] ^ ` and { | } ~
+    n if n >= 0x5B && n <= 0x5E -> True
+    0x60 -> True
+    n if n >= 0x7B && n <= 0x7E -> True
+
+    _ -> False
+  }
+
+  !is_whitespace && !is_illegal
 }
 
 fn is_whitespace(c: String) -> Bool {
